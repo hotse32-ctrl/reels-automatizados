@@ -2,8 +2,8 @@ name: Generar y Publicar Reel Diario
 
 on:
   schedule:
-    - cron: '0 10 * * *'  # Todos los días a las 10:00 AM UTC
-  workflow_dispatch:      # Para ejecutar manualmente desde GitHub
+    - cron: '0 10 * * *'  # Todos los dias a las 10:00 AM UTC
+  workflow_dispatch:  # Para ejecutar manualmente desde GitHub
 
 jobs:
   generar-y-publicar:
@@ -20,10 +20,11 @@ jobs:
 
       - name: Instalar dependencias
         run: |
-          pip install requests google-generativeai Pillow moviepy gTTS google-auth-oauthlib google-api-python-client
-          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install requests google-generativeai Pillow "moviepy==1.0.3" "imageio_ffmpeg" gTTS google-auth-oauthlib google-api-python-client
+          sudo apt-get update && sudo apt-get install -y ffmpeg imagemagick
+          sudo sed -i 's/rights="none" pattern="@\*"/rights="read|write" pattern="@*"/' /etc/ImageMagick-6/policy.xml || true
 
-      - name: Ejecutar script de generación y publicación
+      - name: Ejecutar script de generacion y publicacion
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -33,7 +34,7 @@ jobs:
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
         run: python generar_y_publicar.py
 
-      - name: Subir video generado (artefacto, por si falla la publicación)
+      - name: Subir video generado (artefacto, por si falla la publicacion)
         uses: actions/upload-artifact@v4
         with:
           name: video-generado
