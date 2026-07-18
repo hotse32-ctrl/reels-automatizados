@@ -31,8 +31,7 @@ print("Generando guion...")
 
 try:
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-
+    model = genai.GenerativeModel('gemini-flash-latest')
     prompt_guion = """
 Genera un guion para un Reel de 30 segundos sobre inteligencia artificial.
 Formato obligatorio:
