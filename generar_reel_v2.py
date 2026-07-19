@@ -67,6 +67,17 @@ COLOR_BLANCO = (255, 255, 255, 255)
 COLOR_ROJO = (220, 0, 0, 255)
 COLOR_SOMBRA = (0, 0, 0, 160)
 
+# --- CTA final (llamado a seguir la cuenta) ---
+# Se muestra al final de cada video, después de que termina el guion, con la
+# palabra "Sigueme" en rojo (mismo estilo visual que las palabras clave) para
+# que destaque. No lleva voz — se muestra en silencio (con el sonido ambiental
+# de fondo todavía sonando) durante CTA_DURACION segundos, con un fundido de
+# entrada. Pedido explícito de Jose para fomentar que sigan la cuenta.
+CTA_TEXTO = "Sigueme para mas reels como este."
+CTA_PALABRAS_CLAVE = ["sigueme"]
+CTA_DURACION = 2.5
+CTA_FADE_IN = 0.3
+
 os.makedirs("output", exist_ok=True)
 
 # ============================================================
@@ -469,13 +480,20 @@ def construir_video_tema(tema, guion, palabras_clave, ruta_salida):
 
     # --- Audio y subtítulos, generados JUNTOS frase por frase (sync exacto) ---
     print("🎬 Generando audio y subtítulos sincronizados (frase por frase)...")
-    audio_narracion, clip_subtitulos, duracion_total = construir_audio_y_subtitulos(guion, palabras_clave, font)
+    audio_narracion, clip_subtitulos, duracion_narracion = construir_audio_y_subtitulos(guion, palabras_clave, font)
     duracion_subs = clip_subtitulos.duration
-    print(f"   Duración real del audio: {duracion_total:.1f}s (subtítulos: {duracion_subs:.1f}s)")
+    print(f"   Duración real del audio: {duracion_narracion:.1f}s (subtítulos: {duracion_subs:.1f}s)")
 
-    # Los subtítulos pueden durar un poco más que el audio por el HOLD_FINAL
-    if duracion_subs > duracion_total:
-        duracion_total = duracion_subs
+    # --- CTA final: invita a seguir la cuenta, después de que termina el guion ---
+    img_dummy = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw_dummy = ImageDraw.Draw(img_dummy)
+    cta_lineas = envolver_en_lineas(CTA_TEXTO.split(), font, draw_dummy, MAX_ANCHO_TEXTO)
+    cta_img = renderizar_estado(cta_lineas, sum(len(l) for l in cta_lineas), CTA_PALABRAS_CLAVE, font)
+    cta_clip = ImageClip(np.array(cta_img)).set_duration(CTA_DURACION).crossfadein(CTA_FADE_IN)
+    clip_subtitulos = concatenate_videoclips([clip_subtitulos, cta_clip], method="compose")
+
+    duracion_total = clip_subtitulos.duration
+    print(f"   Duración total con CTA final: {duracion_total:.1f}s")
 
     # --- Video base loopeado hasta cubrir la duración total ---
     print("🎥 Preparando video base...")
