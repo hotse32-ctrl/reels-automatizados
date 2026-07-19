@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import random
 import asyncio
 import unicodedata
 import argparse
@@ -179,17 +180,46 @@ def dividir_en_frases(guion):
 
 
 # ============================================================
+# ÁNGULOS CREATIVOS (se elige uno al azar en cada guion para forzar
+# variedad real — sin esto, Gemini tiende a parafrasear el ejemplo con
+# sinónimos en vez de inventar contenido nuevo, que fue justo el problema
+# que detectó Jose al revisar el primer guion generado).
+# ============================================================
+ANGULOS_CREATIVOS = [
+    "Empieza con una pregunta directa que incomode a quien lo escucha.",
+    "Empieza describiendo una escena cotidiana y concreta (un mensaje que no llega, una llamada que no se hace, una puerta que se cierra).",
+    "Usa como imagen central una comparación con algo físico o cotidiano (un objeto, un lugar, el clima, un sonido).",
+    "Empieza con una orden corta y directa, casi un mandato, y luego explica por qué.",
+    "Contrasta lo que la persona cree que es verdad con lo que en realidad está pasando.",
+    "Cuéntalo como si describieras algo que pasó anoche o hace poco, en pasado breve, y termina en presente.",
+    "Usa una progresión de tres pasos (primero..., luego..., al final...) como estructura del guion.",
+    "Empieza negando de golpe una creencia común sobre el tema.",
+    "Usa una metáfora de la naturaleza (fuego, agua, tormenta, raíces, cicatrices) como hilo conductor.",
+    "Empieza con una afirmación incómoda sobre quien escucha, casi acusatoria, y luego suaviza hacia la esperanza.",
+]
+
+
+# ============================================================
 # 1. GENERAR GUION CON GEMINI (por tema, con reglas estrictas)
 # ============================================================
 def generar_guion(tema, model):
+    angulo = random.choice(ANGULOS_CREATIVOS)
+
     prompt = f"""Eres un guionista experto en contenido motivacional y de psicologia emocional para Reels/Shorts en español.
 
 Tema del día: "{tema['nombre']}"
 
-Escribe un guion de voz en off de 60 a 75 palabras (nunca más de 75), en segundo persona ("tu"), tono dramático y reflexivo,
-con frases cortas separadas por puntos (como golpes de efecto), igual al estilo de este ejemplo (NO lo copies, solo imita el estilo y el largo):
+Escribe un guion de voz en off ORIGINAL de 60 a 75 palabras (nunca más de 75), en segunda persona ("tu"), tono dramático y reflexivo,
+con frases cortas separadas por puntos (como golpes de efecto).
+
+A continuación hay un ejemplo, PERO es SOLO una referencia de tono, ritmo y extensión — no una plantilla para reescribir con sinónimos.
+Está TERMINANTEMENTE PROHIBIDO reutilizar las mismas palabras, frases, metáforas, ejemplos o estructura de frase de este ejemplo.
+Tu guion debe sonar como una idea completamente distinta sobre el mismo tema, con tus propias imágenes y palabras:
 
 "{tema['ejemplo_guion']}"
+
+ENFOQUE OBLIGATORIO PARA ESTE GUION EN PARTICULAR (síguelo, es lo que lo hace distinto cada vez):
+{angulo}
 
 REGLAS OBLIGATORIAS:
 1. Entre 60 y 75 palabras en total (nunca más de 75).
@@ -197,6 +227,7 @@ REGLAS OBLIGATORIAS:
 3. Frases cortas, separadas por puntos.
 4. Español neutro, tono dramático/reflexivo, segunda persona.
 5. Marca entre 5 y 7 "palabras clave" del guion (las palabras más impactantes, tal como estén escritas en el guion, sin puntuación).
+6. NO copies ni parafrasees el ejemplo: ni sus palabras clave, ni sus metáforas, ni el orden de sus ideas. Debe ser contenido nuevo.
 
 Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato exacto:
 {{"guion": "texto del guion aqui", "palabras_clave": ["palabra1", "palabra2", "palabra3"]}}
@@ -205,7 +236,10 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
     ultimo_error = None
     for intento in range(3):
         try:
-            respuesta = model.generate_content(prompt)
+            respuesta = model.generate_content(
+                prompt,
+                generation_config={"temperature": 1.3, "top_p": 0.95},
+            )
             texto = respuesta.text.strip()
             texto = re.sub(r"^```json\s*|\s*```$", "", texto.strip(), flags=re.MULTILINE).strip()
             data = json.loads(texto)
@@ -223,7 +257,8 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
                 print(f"⚠️ Intento {intento+1}: {ultimo_error}, reintentando...")
                 continue
 
-            print(f"✅ Guion generado para tema '{tema['nombre']}' ({num_palabras} palabras)")
+            print(f"✅ Guion generado para tema '{tema['nombre']}' ({num_palabras} palabras, enfoque: {angulo[:40]}...)")
+            print(f"   📝 {guion}")
             return guion, palabras_clave
 
         except Exception as e:
