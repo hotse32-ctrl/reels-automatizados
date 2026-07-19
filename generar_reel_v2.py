@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import asyncio
 import unicodedata
 import argparse
 
@@ -21,7 +22,7 @@ from moviepy.editor import (
 from moviepy.audio.fx.all import audio_loop, volumex
 from moviepy.audio.AudioClip import AudioClip
 
-from gtts import gTTS
+import edge_tts
 import google.generativeai as genai
 
 # ============================================================
@@ -36,16 +37,24 @@ W, H = 720, 1280
 FPS = 24
 VIDEO_BASE_PATH = "assets/video_base.mp4"
 
+# Voz de edge-tts (voces neuronales de Microsoft, gratis, sin API key).
+# es-MX-JorgeNeural: voz masculina, español latino, tono serio/profundo,
+# encaja con el estilo dramático/reflexivo en segunda persona del guion.
+# Reemplaza a gTTS (voz robótica tipo Google Translate) — decisión de Jose
+# tras confirmar que la sincronización y el resto del video ya quedaron bien.
+VOZ_TTS = "es-MX-JorgeNeural"
+
 
 # --- Sincronización de subtítulos con la voz ---
-# El audio se genera FRASE POR FRASE (no todo el guion en un solo llamado a gTTS).
-# Así se conoce la duración REAL y exacta de cada frase hablada, y las palabras
-# en pantalla se reparten dentro de ese tiempo exacto — sync perfecto por diseño,
-# sin necesidad de calcular ni adivinar ritmos de habla.
+# El audio se genera FRASE POR FRASE (no todo el guion en un solo llamado al
+# motor de voz). Así se conoce la duración REAL y exacta de cada frase hablada,
+# y las palabras en pantalla se reparten dentro de ese tiempo exacto — sync
+# perfecto por diseño, sin necesidad de calcular ni adivinar ritmos de habla.
 #
-# gTTS no deja pausas de 1.5s entre frases como se pensó originalmente (deja
-# pausas naturales de ~0.2-0.3s, e irregulares); por eso el silencio ENTRE
-# frases ahora lo insertamos nosotros mismos, de forma controlada y exacta.
+# El motor de voz no deja pausas de 1.5s entre frases como se pensó
+# originalmente (deja pausas naturales cortas e irregulares); por eso el
+# silencio ENTRE frases lo insertamos nosotros mismos, de forma controlada
+# y exacta — esto sigue aplicando igual con edge-tts.
 PAUSA_ENTRE_FRASES = 0.4   # segundos de silencio real insertado entre frases (en el audio Y en los subtítulos)
 FADE_OUT = 0.15            # fundido de salida, dentro del propio tiempo de la frase que termina (no suma duración)
 FADE_IN = 0.15             # fundido de entrada, dentro del propio tiempo de la frase que empieza (no suma duración)
@@ -215,16 +224,20 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
 
 
 # ============================================================
-# 2. AUDIO DE NARRACIÓN (gTTS, UNA LLAMADA POR FRASE)
+# 2. AUDIO DE NARRACIÓN (edge-tts neuronal, UNA LLAMADA POR FRASE)
 # ============================================================
 def generar_audio_frase(texto_frase, ruta_salida):
-    """Genera el audio de UNA sola frase y devuelve su duración real en segundos,
-    o None si falla. Generar frase por frase (en vez de todo el guion junto) es
-    lo que permite sincronizar los subtítulos EXACTO con la voz: se sabe con
-    precisión cuánto dura hablada cada frase, sin tener que adivinar ritmos."""
+    """Genera el audio de UNA sola frase con edge-tts (voz neuronal de Microsoft,
+    gratis y sin API key) y devuelve su duración real en segundos, o None si
+    falla. Generar frase por frase (en vez de todo el guion junto) es lo que
+    permite sincronizar los subtítulos EXACTO con la voz: se sabe con precisión
+    cuánto dura hablada cada frase, sin tener que adivinar ritmos."""
     try:
-        tts = gTTS(text=texto_frase, lang="es", slow=False)
-        tts.save(ruta_salida)
+        async def _generar():
+            communicate = edge_tts.Communicate(texto_frase, voice=VOZ_TTS)
+            await communicate.save(ruta_salida)
+
+        asyncio.run(_generar())
         clip = AudioFileClip(ruta_salida)
         duracion = clip.duration
         clip.close()
@@ -387,7 +400,7 @@ def construir_clip_frase(frase, duracion_frase, palabras_clave, font, draw_dummy
 def construir_audio_y_subtitulos(guion, palabras_clave, font):
     """Genera el audio y los subtítulos animados JUNTOS, frase por frase, para
     que queden perfectamente sincronizados por construcción: cada frase se
-    narra por separado con gTTS (se conoce su duración real exacta), y el
+    narra por separado con edge-tts (se conoce su duración real exacta), y el
     subtítulo de esa frase se reparte dentro de exactamente esa duración.
     Entre frases se inserta una pausa fija y corta (PAUSA_ENTRE_FRASES),
     la misma en el audio (silencio real) y en los subtítulos (fade-out +
@@ -404,7 +417,7 @@ def construir_audio_y_subtitulos(guion, palabras_clave, font):
         duracion_frase = generar_audio_frase(frase, ruta_frase)
 
         if duracion_frase is None:
-            # Respaldo: si gTTS falla en esta frase, estimamos un tiempo
+            # Respaldo: si edge-tts falla en esta frase, estimamos un tiempo
             # razonable (0.35s por palabra) para no perder el video completo.
             n_palabras = len(frase.split())
             duracion_frase = max(n_palabras * 0.35, 0.5)
