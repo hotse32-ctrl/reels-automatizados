@@ -158,13 +158,13 @@ def generar_guion(tema, model):
 
 Tema del día: "{tema['nombre']}"
 
-Escribe un guion de voz en off de 65 a 70 palabras, en segundo persona ("tu"), tono dramático y reflexivo,
+Escribe un guion de voz en off de 60 a 75 palabras (nunca más de 75), en segundo persona ("tu"), tono dramático y reflexivo,
 con frases cortas separadas por puntos (como golpes de efecto), igual al estilo de este ejemplo (NO lo copies, solo imita el estilo y el largo):
 
 "{tema['ejemplo_guion']}"
 
 REGLAS OBLIGATORIAS:
-1. Entre 65 y 70 palabras en total.
+1. Entre 60 y 75 palabras en total (nunca más de 75).
 2. PROHIBIDO usar la letra "Ñ" o "ñ" en cualquier palabra (ninguna excepción, ni siquiera en "año", "pequeño", "señal", etc. — evita esas palabras por completo, usa sinónimos).
 3. Frases cortas, separadas por puntos.
 4. Español neutro, tono dramático/reflexivo, segunda persona.
@@ -190,7 +190,7 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
                 continue
 
             num_palabras = len(guion.split())
-            if num_palabras < 50 or num_palabras > 90:
+            if num_palabras < 60 or num_palabras > 75:
                 ultimo_error = f"Largo fuera de rango ({num_palabras} palabras)"
                 print(f"⚠️ Intento {intento+1}: {ultimo_error}, reintentando...")
                 continue
