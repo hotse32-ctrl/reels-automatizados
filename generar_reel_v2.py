@@ -297,9 +297,12 @@ def obtener_fuente(tamano):
 # ============================================================
 # 5. CONSTRUCCIÓN DE SUBTÍTULOS ANIMADOS (palabra por palabra)
 # ============================================================
-def envolver_en_lineas(palabras, font, draw, max_ancho, max_lineas=2):
-    """Distribuye la lista completa de palabras en hasta `max_lineas` líneas,
-    respetando el ancho máximo. Devuelve una lista de listas de palabras (una por línea)."""
+def envolver_en_lineas(palabras, font, draw, max_ancho):
+    """Distribuye la lista completa de palabras en tantas líneas como haga
+    falta para que ninguna se salga del ancho máximo. SIN límite de líneas:
+    si una frase es larga, se usan las líneas necesarias — nunca se descartan
+    palabras (antes, con un tope fijo de 2 líneas, las palabras que sobraban
+    simplemente desaparecían del video aunque la voz sí las decía)."""
     lineas = []
     linea_actual = []
     for palabra in palabras:
@@ -310,9 +313,7 @@ def envolver_en_lineas(palabras, font, draw, max_ancho, max_lineas=2):
         else:
             lineas.append(linea_actual)
             linea_actual = [palabra]
-        if len(lineas) >= max_lineas:
-            break
-    if linea_actual and len(lineas) < max_lineas:
+    if linea_actual:
         lineas.append(linea_actual)
     return lineas
 
@@ -368,7 +369,7 @@ def construir_clip_frase(frase, duracion_frase, palabras_clave, font, draw_dummy
     de las palabras SIEMPRE calza exacto con lo que dura la voz diciendo
     esa frase — sync exacto, sin necesidad de fórmulas ni de adivinar ritmos."""
     palabras = frase.split()
-    lineas = envolver_en_lineas(palabras, font, draw_dummy, MAX_ANCHO_TEXTO, max_lineas=2)
+    lineas = envolver_en_lineas(palabras, font, draw_dummy, MAX_ANCHO_TEXTO)
     total_palabras = sum(len(l) for l in lineas)
 
     pesos = [max(len(normalizar_palabra(p)), 1) for l in lineas for p in l]
@@ -420,7 +421,7 @@ def construir_audio_y_subtitulos(guion, palabras_clave, font):
         else:
             # Mantener la última frase visible un poco más al terminar el audio
             ultimo_estado = renderizar_estado(
-                envolver_en_lineas(frase.split(), font, draw_dummy, MAX_ANCHO_TEXTO, max_lineas=2),
+                envolver_en_lineas(frase.split(), font, draw_dummy, MAX_ANCHO_TEXTO),
                 len(frase.split()), palabras_clave, font
             )
             hold = ImageClip(np.array(ultimo_estado)).set_duration(HOLD_FINAL)
