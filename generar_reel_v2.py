@@ -9,6 +9,11 @@ import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+# Compatibilidad: Pillow >= 10 eliminó Image.ANTIALIAS, pero moviepy 1.0.3
+# todavía lo usa internamente al hacer resize() de video. Este shim lo repara.
+if not hasattr(Image, "ANTIALIAS"):
+    Image.ANTIALIAS = Image.Resampling.LANCZOS
+
 from moviepy.editor import (
     VideoFileClip, ImageClip, CompositeVideoClip, CompositeAudioClip,
     AudioFileClip, concatenate_videoclips, concatenate_audioclips
@@ -235,29 +240,41 @@ def descargar_sonido_ambiental(url, ruta_salida):
 # 4. FUENTE (Montserrat Bold, descargada en tiempo de ejecución)
 # ============================================================
 def obtener_fuente(tamano):
+    """Descarga Montserrat (fuente variable) y la fija en peso Bold (700).
+    Google Fonts migró Montserrat a un único archivo de fuente variable
+    (ya no existe un .ttf 'Bold' estático separado), así que se descarga
+    Montserrat[wght].ttf y se selecciona el peso 700 vía set_variation_by_axes."""
     ruta_local = os.environ.get("FONT_PATH")
-    candidatos = []
-    if ruta_local:
-        candidatos.append(ruta_local)
+    if ruta_local and os.path.exists(ruta_local):
+        return ImageFont.truetype(ruta_local, tamano)
 
-    ruta_descarga = "output/Montserrat-Bold.ttf"
+    ruta_descarga = "output/Montserrat-Variable.ttf"
     if not os.path.exists(ruta_descarga):
         try:
-            url = "https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/Montserrat-Bold.ttf"
+            url = "https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/Montserrat%5Bwght%5D.ttf"
             r = requests.get(url, timeout=30)
             r.raise_for_status()
             with open(ruta_descarga, "wb") as f:
                 f.write(r.content)
-            print("✅ Fuente Montserrat Bold descargada")
+            print("✅ Fuente Montserrat (variable) descargada")
         except Exception as e:
-            print(f"⚠️ No se pudo descargar Montserrat Bold: {e}")
+            print(f"⚠️ No se pudo descargar Montserrat: {e}")
 
-    candidatos.append(ruta_descarga)
-    candidatos.append("/usr/share/fonts/truetype/google-fonts/Poppins-Bold.ttf")
-    candidatos.append("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")
+    if os.path.exists(ruta_descarga):
+        font = ImageFont.truetype(ruta_descarga, tamano)
+        try:
+            font.set_variation_by_axes([700])  # 700 = Bold
+            print("✅ Peso Bold (700) aplicado a Montserrat")
+        except Exception as e:
+            print(f"⚠️ No se pudo fijar el peso Bold de la fuente variable: {e}")
+        return font
 
-    for c in candidatos:
-        if c and os.path.exists(c):
+    for c in [
+        "/usr/share/fonts/truetype/google-fonts/Poppins-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    ]:
+        if os.path.exists(c):
+            print(f"⚠️ Usando fuente de respaldo: {c}")
             return ImageFont.truetype(c, tamano)
 
     return ImageFont.load_default()
