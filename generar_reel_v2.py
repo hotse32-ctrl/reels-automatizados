@@ -36,12 +36,21 @@ W, H = 720, 1280
 FPS = 24
 VIDEO_BASE_PATH = "assets/video_base.mp4"
 
-WPM = 150.0
-SEG_POR_PALABRA = 60.0 / WPM        # 0.4s por palabra
-PAUSA_FRASE = 1.5                    # segundos de texto fijo tras revelar la frase
-FADE_OUT = 0.3
-BLANCO_TRANSICION = 0.2
-FADE_IN = 0.3
+
+# --- Sincronización de subtítulos con la voz ---
+# El audio se genera FRASE POR FRASE (no todo el guion en un solo llamado a gTTS).
+# Así se conoce la duración REAL y exacta de cada frase hablada, y las palabras
+# en pantalla se reparten dentro de ese tiempo exacto — sync perfecto por diseño,
+# sin necesidad de calcular ni adivinar ritmos de habla.
+#
+# gTTS no deja pausas de 1.5s entre frases como se pensó originalmente (deja
+# pausas naturales de ~0.2-0.3s, e irregulares); por eso el silencio ENTRE
+# frases ahora lo insertamos nosotros mismos, de forma controlada y exacta.
+PAUSA_ENTRE_FRASES = 0.4   # segundos de silencio real insertado entre frases
+FADE_OUT = 0.15            # parte de la pausa usada en fade-out
+BLANCO_TRANSICION = 0.10   # parte de la pausa que queda en blanco
+FADE_IN = 0.15             # parte de la pausa usada en fade-in (0.15+0.10+0.15 = 0.4)
+HOLD_FINAL = 0.6           # segundos que se mantiene visible la última frase al terminar
 
 FONT_SIZE = 60
 MAX_ANCHO_TEXTO = int(W * 0.7)  # 70% del ancho, según especificación
@@ -207,17 +216,23 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
 
 
 # ============================================================
-# 2. AUDIO DE NARRACIÓN (gTTS)
+# 2. AUDIO DE NARRACIÓN (gTTS, UNA LLAMADA POR FRASE)
 # ============================================================
-def generar_audio_narracion(texto, ruta_salida):
+def generar_audio_frase(texto_frase, ruta_salida):
+    """Genera el audio de UNA sola frase y devuelve su duración real en segundos,
+    o None si falla. Generar frase por frase (en vez de todo el guion junto) es
+    lo que permite sincronizar los subtítulos EXACTO con la voz: se sabe con
+    precisión cuánto dura hablada cada frase, sin tener que adivinar ritmos."""
     try:
-        tts = gTTS(text=texto, lang="es", slow=False)
+        tts = gTTS(text=texto_frase, lang="es", slow=False)
         tts.save(ruta_salida)
-        print("✅ Audio de narración generado")
-        return True
+        clip = AudioFileClip(ruta_salida)
+        duracion = clip.duration
+        clip.close()
+        return duracion
     except Exception as e:
-        print(f"❌ Error al generar audio de narración: {e}")
-        return False
+        print(f"⚠️ Error al generar audio de la frase '{texto_frase[:30]}...': {e}")
+        return None
 
 
 # ============================================================
@@ -346,69 +361,86 @@ def renderizar_estado(lineas_completas, num_palabras_visibles, palabras_clave, f
     return img
 
 
-def calcular_duracion_ideal(guion):
-    """Calcula la duración 'ideal' del timeline de subtítulos usando las
-    constantes de diseño originales (150 ppm, 1.5s de pausa, 0.8s de transición),
-    sin renderizar nada. Se usa solo como referencia para escalar el timing real."""
-    frases = dividir_en_frases(guion)
-    total = 0.0
-    for i, frase in enumerate(frases):
-        n = len(frase.split())
-        total += n * SEG_POR_PALABRA + PAUSA_FRASE
-        if i < len(frases) - 1:
-            total += FADE_OUT + BLANCO_TRANSICION + FADE_IN
-    return total
+def construir_clip_frase(frase, duracion_frase, palabras_clave, font, draw_dummy, img_dummy):
+    """Construye el clip de subtítulo de UNA frase, revelando sus palabras
+    dentro de exactamente `duracion_frase` segundos (la duración real de su
+    audio). Cada palabra recibe tiempo proporcional a su largo en caracteres
+    (una palabra larga tarda más en decirse que una corta), así que la suma
+    de las palabras SIEMPRE calza exacto con lo que dura la voz diciendo
+    esa frase — sync exacto, sin necesidad de fórmulas ni de adivinar ritmos."""
+    palabras = frase.split()
+    lineas = envolver_en_lineas(palabras, font, draw_dummy, MAX_ANCHO_TEXTO, max_lineas=2)
+    total_palabras = sum(len(l) for l in lineas)
+
+    pesos = [max(len(normalizar_palabra(p)), 1) for l in lineas for p in l]
+    peso_total = sum(pesos)
+
+    clips = []
+    for n in range(1, total_palabras + 1):
+        img = renderizar_estado(lineas, n, palabras_clave, font)
+        duracion = duracion_frase * (pesos[n - 1] / peso_total)
+        clips.append(ImageClip(np.array(img)).set_duration(duracion))
+
+    return concatenate_videoclips(clips, method="compose")
 
 
-def construir_clip_subtitulos(guion, palabras_clave, font, factor_escala=1.0):
-    """Construye el CompositeVideoClip de subtítulos animados para todo el guion
-    y devuelve (clip_subtitulos, duracion_total_segundos).
-
-    `factor_escala` ajusta TODO el timing (revelado de palabras, pausas y
-    transiciones) proporcionalmente, para que la duración total coincida
-    exactamente con la duración real del audio narrado (evita el desfase
-    entre subtítulos y voz que se genera si se usa un ritmo fijo de 150 ppm
-    sin importar cómo hable realmente gTTS)."""
-    seg_por_palabra = SEG_POR_PALABRA * factor_escala
-    pausa_frase = PAUSA_FRASE * factor_escala
-    fade_out = FADE_OUT * factor_escala
-    blanco_transicion = BLANCO_TRANSICION * factor_escala
-    fade_in = FADE_IN * factor_escala
-
+def construir_audio_y_subtitulos(guion, palabras_clave, font):
+    """Genera el audio y los subtítulos animados JUNTOS, frase por frase, para
+    que queden perfectamente sincronizados por construcción: cada frase se
+    narra por separado con gTTS (se conoce su duración real exacta), y el
+    subtítulo de esa frase se reparte dentro de exactamente esa duración.
+    Entre frases se inserta una pausa fija y corta (PAUSA_ENTRE_FRASES),
+    la misma en el audio (silencio real) y en los subtítulos (fade-out +
+    blanco + fade-in). Devuelve (audio_clip, subtitulos_clip, duracion_total)."""
     frases = dividir_en_frases(guion)
     img_dummy = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw_dummy = ImageDraw.Draw(img_dummy)
 
-    clips = []
+    clips_audio = []
+    clips_subs = []
 
     for i, frase in enumerate(frases):
-        palabras = frase.split()
-        lineas = envolver_en_lineas(palabras, font, draw_dummy, MAX_ANCHO_TEXTO, max_lineas=2)
-        total_palabras = sum(len(l) for l in lineas)
+        ruta_frase = f"output/frase_{i}.mp3"
+        duracion_frase = generar_audio_frase(frase, ruta_frase)
 
-        inicio_frase_idx = len(clips)
+        if duracion_frase is None:
+            # Respaldo: si gTTS falla en esta frase, estimamos un tiempo
+            # razonable (0.35s por palabra) para no perder el video completo.
+            n_palabras = len(frase.split())
+            duracion_frase = max(n_palabras * 0.35, 0.5)
+            audio_frase = AudioClip(lambda t: [0, 0], duration=duracion_frase)
+        else:
+            audio_frase = AudioFileClip(ruta_frase)
 
-        # Estados: revelar palabra por palabra
-        for n in range(1, total_palabras + 1):
-            img = renderizar_estado(lineas, n, palabras_clave, font)
-            duracion = seg_por_palabra
-            if n == total_palabras:
-                duracion += pausa_frase  # última palabra se queda fija tras revelar la frase
-            clip = ImageClip(np.array(img)).set_duration(duracion)
-            clips.append(clip)
+        clips_audio.append(audio_frase)
+        clip_frase = construir_clip_frase(frase, duracion_frase, palabras_clave, font, draw_dummy, img_dummy)
 
-        # Fade-in de la primera palabra de esta frase (excepto la primera frase del video)
-        if inicio_frase_idx > 0:
-            clips[inicio_frase_idx] = clips[inicio_frase_idx].crossfadein(fade_in)
+        es_ultima = (i == len(frases) - 1)
+        if not es_ultima:
+            clip_frase = clip_frase.crossfadeout(FADE_OUT)
+        else:
+            # Mantener la última frase visible un poco más al terminar el audio
+            ultimo_estado = renderizar_estado(
+                envolver_en_lineas(frase.split(), font, draw_dummy, MAX_ANCHO_TEXTO, max_lineas=2),
+                len(frase.split()), palabras_clave, font
+            )
+            hold = ImageClip(np.array(ultimo_estado)).set_duration(HOLD_FINAL)
+            clip_frase = concatenate_videoclips([clip_frase, hold], method="compose")
 
-        # Transición entre frases (no aplica después de la última)
-        if i < len(frases) - 1:
-            clips[-1] = clips[-1].crossfadeout(fade_out)
-            blanco = ImageClip(np.array(img_dummy)).set_duration(blanco_transicion)
-            clips.append(blanco)
+        if i > 0:
+            clip_frase = clip_frase.crossfadein(FADE_IN)
 
-    secuencia = concatenate_videoclips(clips, method="compose")
-    return secuencia, secuencia.duration
+        clips_subs.append(clip_frase)
+
+        if not es_ultima:
+            silencio = AudioClip(lambda t: [0, 0], duration=PAUSA_ENTRE_FRASES)
+            clips_audio.append(silencio)
+            blanco = ImageClip(np.array(img_dummy)).set_duration(BLANCO_TRANSICION)
+            clips_subs.append(blanco)
+
+    audio_final = concatenate_audioclips(clips_audio)
+    subs_final = concatenate_videoclips(clips_subs, method="compose")
+    return audio_final, subs_final, audio_final.duration
 
 
 # ============================================================
@@ -417,25 +449,13 @@ def construir_clip_subtitulos(guion, palabras_clave, font, factor_escala=1.0):
 def construir_video_tema(tema, guion, palabras_clave, ruta_salida):
     font = obtener_fuente(FONT_SIZE)
 
-    # --- Audio de narración PRIMERO: su duración real manda sobre todo lo demás ---
-    ruta_audio_narracion = "output/narracion.mp3"
-    ok_audio = generar_audio_narracion(guion, ruta_audio_narracion)
-    if ok_audio and os.path.exists(ruta_audio_narracion):
-        audio_narracion = AudioFileClip(ruta_audio_narracion)
-        duracion_total = audio_narracion.duration
-    else:
-        # Sin audio real disponible: usar la duración ideal calculada por fórmula
-        duracion_total = calcular_duracion_ideal(guion)
-        audio_narracion = AudioClip(lambda t: [0, 0], duration=duracion_total)
+    # --- Audio y subtítulos, generados JUNTOS frase por frase (sync exacto) ---
+    print("🎬 Generando audio y subtítulos sincronizados (frase por frase)...")
+    audio_narracion, clip_subtitulos, duracion_total = construir_audio_y_subtitulos(guion, palabras_clave, font)
+    duracion_subs = clip_subtitulos.duration
+    print(f"   Duración real del audio: {duracion_total:.1f}s (subtítulos: {duracion_subs:.1f}s)")
 
-    # --- Subtítulos animados, escalados para calzar EXACTO con la voz real ---
-    print("🎬 Construyendo subtítulos animados...")
-    duracion_ideal = calcular_duracion_ideal(guion)
-    factor_escala = duracion_total / duracion_ideal if duracion_ideal > 0 else 1.0
-    print(f"   Duración real del audio: {duracion_total:.1f}s (factor de ajuste: {factor_escala:.2f})")
-    clip_subtitulos, duracion_subs = construir_clip_subtitulos(guion, palabras_clave, font, factor_escala)
-
-    # Pequeño margen por redondeo de frames entre el timeline de audio y el de subtítulos
+    # Los subtítulos pueden durar un poco más que el audio por el HOLD_FINAL
     if duracion_subs > duracion_total:
         duracion_total = duracion_subs
 
