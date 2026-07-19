@@ -346,40 +346,68 @@ def renderizar_estado(lineas_completas, num_palabras_visibles, palabras_clave, f
     return img
 
 
-def construir_clip_subtitulos(guion, palabras_clave, font):
+def calcular_duracion_ideal(guion):
+    """Calcula la duración 'ideal' del timeline de subtítulos usando las
+    constantes de diseño originales (150 ppm, 1.5s de pausa, 0.8s de transición),
+    sin renderizar nada. Se usa solo como referencia para escalar el timing real."""
+    frases = dividir_en_frases(guion)
+    total = 0.0
+    for i, frase in enumerate(frases):
+        n = len(frase.split())
+        total += n * SEG_POR_PALABRA + PAUSA_FRASE
+        if i < len(frases) - 1:
+            total += FADE_OUT + BLANCO_TRANSICION + FADE_IN
+    return total
+
+
+def construir_clip_subtitulos(guion, palabras_clave, font, factor_escala=1.0):
     """Construye el CompositeVideoClip de subtítulos animados para todo el guion
-    y devuelve (clip_subtitulos, duracion_total_segundos)."""
+    y devuelve (clip_subtitulos, duracion_total_segundos).
+
+    `factor_escala` ajusta TODO el timing (revelado de palabras, pausas y
+    transiciones) proporcionalmente, para que la duración total coincida
+    exactamente con la duración real del audio narrado (evita el desfase
+    entre subtítulos y voz que se genera si se usa un ritmo fijo de 150 ppm
+    sin importar cómo hable realmente gTTS)."""
+    seg_por_palabra = SEG_POR_PALABRA * factor_escala
+    pausa_frase = PAUSA_FRASE * factor_escala
+    fade_out = FADE_OUT * factor_escala
+    blanco_transicion = BLANCO_TRANSICION * factor_escala
+    fade_in = FADE_IN * factor_escala
+
     frases = dividir_en_frases(guion)
     img_dummy = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw_dummy = ImageDraw.Draw(img_dummy)
 
     clips = []
-    tiempo_actual = 0.0
 
     for i, frase in enumerate(frases):
         palabras = frase.split()
         lineas = envolver_en_lineas(palabras, font, draw_dummy, MAX_ANCHO_TEXTO, max_lineas=2)
         total_palabras = sum(len(l) for l in lineas)
 
+        inicio_frase_idx = len(clips)
+
         # Estados: revelar palabra por palabra
         for n in range(1, total_palabras + 1):
             img = renderizar_estado(lineas, n, palabras_clave, font)
-            duracion = SEG_POR_PALABRA
+            duracion = seg_por_palabra
             if n == total_palabras:
-                duracion += PAUSA_FRASE  # última palabra se queda fija 1.5s extra
+                duracion += pausa_frase  # última palabra se queda fija tras revelar la frase
             clip = ImageClip(np.array(img)).set_duration(duracion)
             clips.append(clip)
 
+        # Fade-in de la primera palabra de esta frase (excepto la primera frase del video)
+        if inicio_frase_idx > 0:
+            clips[inicio_frase_idx] = clips[inicio_frase_idx].crossfadein(fade_in)
+
         # Transición entre frases (no aplica después de la última)
         if i < len(frases) - 1:
-            # fade out de la última imagen de esta frase
-            clips[-1] = clips[-1].crossfadeout(FADE_OUT)
-            blanco = ImageClip(np.array(img_dummy)).set_duration(BLANCO_TRANSICION)
+            clips[-1] = clips[-1].crossfadeout(fade_out)
+            blanco = ImageClip(np.array(img_dummy)).set_duration(blanco_transicion)
             clips.append(blanco)
 
     secuencia = concatenate_videoclips(clips, method="compose")
-
-    # fade-in de la primera palabra de cada frase (excepto la primera del video)
     return secuencia, secuencia.duration
 
 
@@ -389,9 +417,27 @@ def construir_clip_subtitulos(guion, palabras_clave, font):
 def construir_video_tema(tema, guion, palabras_clave, ruta_salida):
     font = obtener_fuente(FONT_SIZE)
 
+    # --- Audio de narración PRIMERO: su duración real manda sobre todo lo demás ---
+    ruta_audio_narracion = "output/narracion.mp3"
+    ok_audio = generar_audio_narracion(guion, ruta_audio_narracion)
+    if ok_audio and os.path.exists(ruta_audio_narracion):
+        audio_narracion = AudioFileClip(ruta_audio_narracion)
+        duracion_total = audio_narracion.duration
+    else:
+        # Sin audio real disponible: usar la duración ideal calculada por fórmula
+        duracion_total = calcular_duracion_ideal(guion)
+        audio_narracion = AudioClip(lambda t: [0, 0], duration=duracion_total)
+
+    # --- Subtítulos animados, escalados para calzar EXACTO con la voz real ---
     print("🎬 Construyendo subtítulos animados...")
-    clip_subtitulos, duracion_total = construir_clip_subtitulos(guion, palabras_clave, font)
-    print(f"   Duración calculada por subtítulos: {duracion_total:.1f}s")
+    duracion_ideal = calcular_duracion_ideal(guion)
+    factor_escala = duracion_total / duracion_ideal if duracion_ideal > 0 else 1.0
+    print(f"   Duración real del audio: {duracion_total:.1f}s (factor de ajuste: {factor_escala:.2f})")
+    clip_subtitulos, duracion_subs = construir_clip_subtitulos(guion, palabras_clave, font, factor_escala)
+
+    # Pequeño margen por redondeo de frames entre el timeline de audio y el de subtítulos
+    if duracion_subs > duracion_total:
+        duracion_total = duracion_subs
 
     # --- Video base loopeado hasta cubrir la duración total ---
     print("🎥 Preparando video base...")
@@ -399,27 +445,18 @@ def construir_video_tema(tema, guion, palabras_clave, ruta_salida):
     n_loops = int(duracion_total // video_original.duration) + 1
     video_loop = concatenate_videoclips([video_original] * n_loops).subclip(0, duracion_total)
 
-    # --- Audio de narración ---
-    ruta_audio_narracion = "output/narracion.mp3"
-    ok_audio = generar_audio_narracion(guion, ruta_audio_narracion)
-    if ok_audio and os.path.exists(ruta_audio_narracion):
-        audio_narracion = AudioFileClip(ruta_audio_narracion)
-        if audio_narracion.duration < duracion_total:
-            silencio = AudioClip(lambda t: [0, 0], duration=duracion_total - audio_narracion.duration)
-            audio_narracion = concatenate_audioclips([audio_narracion, silencio])
-        else:
-            audio_narracion = audio_narracion.subclip(0, duracion_total)
-    else:
-        audio_narracion = AudioClip(lambda t: [0, 0], duration=duracion_total)
+    if audio_narracion.duration < duracion_total:
+        silencio = AudioClip(lambda t: [0, 0], duration=duracion_total - audio_narracion.duration)
+        audio_narracion = concatenate_audioclips([audio_narracion, silencio])
 
-    # --- Sonido ambiental de fondo ---
+    # --- Sonido ambiental de fondo (muy bajo, de fondo nada más) ---
     ruta_sonido = "output/ambiente.mp3"
     audio_ambiente = None
     if descargar_sonido_ambiental(tema["sonido_url"], ruta_sonido):
         try:
             amb = AudioFileClip(ruta_sonido)
             amb = audio_loop(amb, duration=duracion_total)
-            audio_ambiente = volumex(amb, 0.25)
+            audio_ambiente = volumex(amb, 0.12)
         except Exception as e:
             print(f"⚠️ No se pudo procesar el sonido ambiental: {e}")
 
