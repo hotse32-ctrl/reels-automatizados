@@ -24,7 +24,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          pip install requests google-generativeai Pillow numpy "moviepy==1.0.3" imageio_ffmpeg gTTS
+          pip install requests google-generativeai Pillow numpy "moviepy==1.0.3" imageio_ffmpeg edge-tts
 
       - name: Ejecutar pipeline nuevo (sin publicar, solo generar video)
         env:
