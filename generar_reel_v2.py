@@ -46,10 +46,9 @@ VIDEO_BASE_PATH = "assets/video_base.mp4"
 # gTTS no deja pausas de 1.5s entre frases como se pensó originalmente (deja
 # pausas naturales de ~0.2-0.3s, e irregulares); por eso el silencio ENTRE
 # frases ahora lo insertamos nosotros mismos, de forma controlada y exacta.
-PAUSA_ENTRE_FRASES = 0.4   # segundos de silencio real insertado entre frases
-FADE_OUT = 0.15            # parte de la pausa usada en fade-out
-BLANCO_TRANSICION = 0.10   # parte de la pausa que queda en blanco
-FADE_IN = 0.15             # parte de la pausa usada en fade-in (0.15+0.10+0.15 = 0.4)
+PAUSA_ENTRE_FRASES = 0.4   # segundos de silencio real insertado entre frases (en el audio Y en los subtítulos)
+FADE_OUT = 0.15            # fundido de salida, dentro del propio tiempo de la frase que termina (no suma duración)
+FADE_IN = 0.15             # fundido de entrada, dentro del propio tiempo de la frase que empieza (no suma duración)
 HOLD_FINAL = 0.6           # segundos que se mantiene visible la última frase al terminar
 
 FONT_SIZE = 60
@@ -435,7 +434,12 @@ def construir_audio_y_subtitulos(guion, palabras_clave, font):
         if not es_ultima:
             silencio = AudioClip(lambda t: [0, 0], duration=PAUSA_ENTRE_FRASES)
             clips_audio.append(silencio)
-            blanco = ImageClip(np.array(img_dummy)).set_duration(BLANCO_TRANSICION)
+            # OJO: crossfadein()/crossfadeout() NO agregan duración extra en moviepy
+            # (funden DENTRO del tiempo propio de cada clip). El único tiempo que se
+            # suma de verdad al timeline es este clip en blanco — por eso debe durar
+            # EXACTO lo mismo que el silencio insertado en el audio (PAUSA_ENTRE_FRASES),
+            # si no, subtítulos y voz se desfasan cada vez más a medida que avanza el video.
+            blanco = ImageClip(np.array(img_dummy)).set_duration(PAUSA_ENTRE_FRASES)
             clips_subs.append(blanco)
 
     audio_final = concatenate_audioclips(clips_audio)
