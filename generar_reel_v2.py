@@ -221,21 +221,55 @@ ANGULOS_CREATIVOS = [
     "Empieza con una afirmación incómoda sobre quien escucha, casi acusatoria, y luego suaviza hacia la esperanza.",
 ]
 
+# ============================================================
+# COMBINACIONES RETÓRICAS (se elige una al azar en cada guion, igual que
+# el ángulo). Antes se exigían los 5 elementos SIEMPRE, lo que hacía que
+# todos los guiones tuvieran la misma forma aunque el contenido cambiara.
+# Cada combinación usa entre 3 y 5 de los 5 elementos, con una lógica de
+# apertura/cuerpo/cierre coherente (no es una mezcla al azar) — algunas
+# cierran con golpe directo (frase final puñetazo) y otras con un cierre
+# más reflexivo, para variar también la FORMA, no solo las palabras.
+# ============================================================
+COMBINACIONES_RETORICAS = [
+    "Usa PREGUNTA RETÓRICA (al inicio, para incomodar) + REPETICIÓN ECO (en el medio) + FRASE FINAL PUÑETAZO (para cerrar con golpe). No uses antítesis ni imagen potente en este guion.",
+    "Usa ANTÍTESIS (al inicio, como contraste) + IMAGEN POTENTE (en el cuerpo) + FRASE FINAL PUÑETAZO (para cerrar con golpe). No uses pregunta retórica ni repetición eco en este guion.",
+    "Usa IMAGEN POTENTE (al inicio) + REPETICIÓN ECO (en el cuerpo) + PREGUNTA RETÓRICA (como cierre, dejando pensando en vez de golpe directo). No uses antítesis ni frase final puñetazo en este guion.",
+    "Usa REPETICIÓN ECO (desde el inicio) + ANTÍTESIS (en el cuerpo) + FRASE FINAL PUÑETAZO (para cerrar con golpe). No uses pregunta retórica ni imagen potente en este guion.",
+    "Usa PREGUNTA RETÓRICA + ANTÍTESIS + IMAGEN POTENTE, en ese orden, con un cierre reflexivo y suave (SIN frase final puñetazo marcada, SIN repetición eco en este guion).",
+    "Usa IMAGEN POTENTE (al inicio) + ANTÍTESIS (en el cuerpo) + FRASE FINAL PUÑETAZO (para cerrar con golpe). No uses pregunta retórica ni repetición eco en este guion.",
+    "Usa REPETICIÓN ECO (al inicio) + PREGUNTA RETÓRICA (en el cuerpo) + FRASE FINAL PUÑETAZO (para cerrar con golpe). No uses antítesis ni imagen potente en este guion.",
+    "Usa los 5 elementos completos: frase final puñetazo, pregunta retórica, antítesis, repetición eco, e imagen potente.",
+    "Usa PREGUNTA RETÓRICA (al inicio) + REPETICIÓN ECO (en el cuerpo) + ANTÍTESIS + FRASE FINAL PUÑETAZO (para cerrar con golpe). No uses imagen potente en este guion.",
+    "Usa ANTÍTESIS (al inicio) + REPETICIÓN ECO (en el cuerpo) + IMAGEN POTENTE, con un cierre reflexivo y suave (SIN frase final puñetazo marcada, SIN pregunta retórica en este guion).",
+]
+
 
 # ============================================================
 # 1. GENERAR GUION CON GEMINI (por tema, con reglas estrictas)
 # ============================================================
 def generar_guion(tema, model):
     angulo = random.choice(ANGULOS_CREATIVOS)
+    combinacion = random.choice(COMBINACIONES_RETORICAS)
 
     prompt = f"""Eres un guionista experto en contenido motivacional y de psicologia emocional para Reels/Shorts en español.
 
 Tema del día: "{tema['nombre']}"
 
-Escribe un guion de voz en off ORIGINAL de 60 a 75 palabras (nunca más de 75), en segunda persona ("tu"), tono dramático y reflexivo,
-con frases cortas separadas por puntos (como golpes de efecto).
+Escribe un texto para SUBTITULOS en pantalla de entre 66 y 70 palabras (nunca fuera de ese rango), en segunda persona ("tu"), tono dramático y reflexivo.
 
-A continuación hay un ejemplo, PERO es SOLO una referencia de tono, ritmo y extensión — no una plantilla para reescribir con sinónimos.
+El texto debe sonar NATURAL, como una reflexión interna. NO uses punto tras cada frase corta. Combina frases cortas (4-6 palabras) con frases más largas (8-12 palabras). Usa comas y puntos seguidos para dar fluidez. El punto solo va al final de una idea completa.
+
+ELEMENTOS OBLIGATORIOS (los 5 que hacen que el texto "retumbe"):
+1. FRASE FINAL PUÑETAZO: Termina con una frase corta, contundente e inesperada. Que el espectador quiera repetirla en voz alta. Ejemplo: "El silencio no te protege, te entrega."
+2. PREGUNTA RETÓRICA: Incluye al menos UNA pregunta que incomode al espectador. Ejemplo: "¿Hasta cuando vas a esperar a quien nunca llamo?"
+3. ANTÍTESIS: Crea un contraste entre dos ideas opuestas en una misma frase. Ejemplo: "Te dice que te ama, pero te borra."
+4. REPETICIÓN ECO: Repite una palabra clave 2 o 3 veces a lo largo del guion, como un latido. Ejemplo: "Esperaste. Esperaste que cambiara. Esperaste que te viera."
+5. IMAGEN POTENTE: Usa una imagen tan visual que el espectador pueda "verla" con los ojos cerrados. Ejemplo: "Te dio un puñado de migajas y tu construiste un castillo con ellas."
+
+EJEMPLO de ritmo natural con los 5 elementos aplicados (de otro tema, NO copies nada de esto):
+"El reloj no se detiene, pero tu si. Te quedaste en la misma hora, esperando que el tiempo vuelva atras. ¿No ves que el mundo sigue sin ti? El miedo te ancla, pero la decision te suelta. No es que no puedas avanzar, es que te acostumbraste a esperar. Deja de esperar. El tiempo no vuelve, pero tu si puedes."
+
+A continuación hay un ejemplo del TEMA ACTUAL, PERO es SOLO una referencia de tono, ritmo y extensión — no una plantilla para reescribir con sinónimos.
 Está TERMINANTEMENTE PROHIBIDO reutilizar las mismas palabras, frases, metáforas, ejemplos o estructura de frase de este ejemplo.
 Tu guion debe sonar como una idea completamente distinta sobre el mismo tema, con tus propias imágenes y palabras:
 
@@ -245,12 +279,12 @@ ENFOQUE OBLIGATORIO PARA ESTE GUION EN PARTICULAR (síguelo, es lo que lo hace d
 {angulo}
 
 REGLAS OBLIGATORIAS:
-1. Entre 60 y 75 palabras en total (nunca más de 75).
-2. PROHIBIDO usar la letra "Ñ" o "ñ" en cualquier palabra (ninguna excepción, ni siquiera en "año", "pequeño", "señal", etc. — evita esas palabras por completo, usa sinónimos).
-3. Frases cortas, separadas por puntos.
-4. Español neutro, tono dramático/reflexivo, segunda persona.
-5. Marca entre 5 y 7 "palabras clave" del guion (las palabras más impactantes, tal como estén escritas en el guion, sin puntuación).
-6. NO copies ni parafrasees el ejemplo: ni sus palabras clave, ni sus metáforas, ni el orden de sus ideas. Debe ser contenido nuevo.
+1. Entre 66 y 70 palabras en total (cuéntalas una por una antes de responder).
+2. PROHIBIDO usar la letra "Ñ" o "ñ" en cualquier palabra, sin excepción. Evita por completo palabras como "año", "pequeño", "señal", "compañía" — reemplázalas por sinónimos SIN ñ que mantengan el significado correcto (ej: "pequeño" → "chico", "señal" → "muestra", "compañía" → "presencia", "año" → "ciclo" o reformula la frase). IMPORTANTE: nunca le quites la ñ a una palabra dejándola mal escrita (por ejemplo, JAMÁS escribas "ano" en vez de "año" — son palabras completamente distintas y una de ellas es vulgar). Si no encuentras un sinónimo natural, reformula toda la frase para evitar esa palabra.
+3. PROHIBIDO usar punto tras cada frase corta. Usa comas y puntos seguidos para dar fluidez natural. El punto solo va al final de una idea completa.
+4. COMBINACIÓN RETÓRICA OBLIGATORIA PARA ESTE GUION (usa SOLO los elementos que se indican aquí, no agregues los que no se piden): {combinacion}
+5. Marca entre 5 y 7 "palabras clave" del guion. Deben ser SUSTANTIVOS o VERBOS de acción (no adjetivos ni conectores). Deben aparecer en posiciones de impacto: inicio o final de frase, o en la repetición eco.
+6. NO copies ni parafrasees el ejemplo del tema actual: ni sus palabras clave, ni sus metáforas, ni el orden de sus ideas. Debe ser contenido nuevo.
 
 Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato exacto:
 {{"guion": "texto del guion aqui", "palabras_clave": ["palabra1", "palabra2", "palabra3"]}}
@@ -275,12 +309,12 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
                 continue
 
             num_palabras = len(guion.split())
-            if num_palabras < 60 or num_palabras > 75:
+            if num_palabras < 66 or num_palabras > 70:
                 ultimo_error = f"Largo fuera de rango ({num_palabras} palabras)"
                 print(f"⚠️ Intento {intento+1}: {ultimo_error}, reintentando...")
                 continue
 
-            print(f"✅ Guion generado para tema '{tema['nombre']}' ({num_palabras} palabras, enfoque: {angulo[:40]}...)")
+            print(f"✅ Guion generado para tema '{tema['nombre']}' ({num_palabras} palabras, enfoque: {angulo[:40]}..., combinación: {combinacion[:40]}...)")
             print(f"   📝 {guion}")
             return guion, palabras_clave
 
