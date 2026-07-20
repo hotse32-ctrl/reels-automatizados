@@ -8,6 +8,12 @@ on:
         required: true
         default: '1'
 
+# contents: write es necesario solo si en algun momento se prueba el flujo
+# de publicacion real (no aplica con --no-publicar, pero se deja igual por
+# consistencia con publicar_diario.yml).
+permissions:
+  contents: write
+
 jobs:
   probar:
     runs-on: ubuntu-latest
