@@ -27,6 +27,8 @@ from moviepy.audio.AudioClip import AudioClip
 import edge_tts
 import google.generativeai as genai
 
+from banco_guiones import BANCO_GUIONES
+
 # ============================================================
 # CONFIGURACIÓN GENERAL
 # ============================================================
@@ -60,6 +62,15 @@ THREADS_ACCESS_TOKEN = os.environ.get("THREADS_ACCESS_TOKEN")
 W, H = 720, 1280
 FPS = 24
 VIDEO_BASE_PATH = "assets/video_base.mp4"
+
+# --- Imagen de fondo fija por tema (con zoom lento tipo Ken Burns) ---
+# Reemplaza al video base único: cada tema tiene su propia imagen fija
+# (generada por Jose, guardada en assets/imagenes/temaN.jpg), y se le aplica
+# un zoom lento continuo durante toda la duración del reel para que el
+# fondo no se vea estático. ZOOM_FACTOR = cuánto más grande termina la
+# imagen al final del video respecto al inicio (1.15 = 15% de zoom total).
+CARPETA_IMAGENES_TEMA = "assets/imagenes"
+ZOOM_FACTOR = 1.15
 
 # Voz de edge-tts (voces neuronales de Microsoft, gratis, sin API key).
 # es-MX-JorgeNeural: voz masculina, español latino, tono serio/profundo,
@@ -327,6 +338,66 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
 
 
 # ============================================================
+# 1.b BANCO DE GUIONES ESCRITO A MANO (fuente PRINCIPAL, ahorra cuota
+# de Gemini). Gemini queda como RESPALDO, solo si el banco no tiene
+# guiones para ese tema (nunca debería pasar, hay 45 por tema) o si
+# hay algún error inesperado leyendo el banco.
+# ============================================================
+STOPWORDS_KEYWORDS = {
+    "que", "para", "pero", "esa", "ese", "esta", "este", "esto", "eso",
+    "como", "cuando", "donde", "aunque", "ahora", "hoy", "mismo", "misma",
+    "tambien", "siempre", "nunca", "solo", "sola", "mas", "muy", "porque",
+    "desde", "hasta", "entre", "sobre", "cada", "todo", "toda", "todos",
+    "todas", "otra", "otro", "algo", "alguien", "nadie", "tiene", "tienes",
+    "puede", "puedes", "hace", "haces", "vez", "asi", "sin", "con", "una",
+    "uno", "unos", "unas", "los", "las", "del", "por", "sus", "tus", "mis",
+}
+
+
+def extraer_palabras_clave_banco(guion):
+    """Los guiones escritos a mano en banco_guiones.py no traen una lista de
+    palabras clave (a diferencia de los que genera Gemini con su propio JSON),
+    así que se eligen automáticamente: palabras largas (>=6 letras), sin
+    contar conectores/stopwords, priorizando variedad. Da un resultado
+    aproximado pero suficiente para resaltar en rojo los términos de más
+    peso visual del guion."""
+    candidatas = []
+    vistas = set()
+    for palabra in guion.split():
+        norm = normalizar_palabra(palabra)
+        if len(norm) >= 6 and norm not in STOPWORDS_KEYWORDS and norm not in vistas:
+            candidatas.append(norm)
+            vistas.add(norm)
+    return candidatas[:7] if candidatas else []
+
+
+def obtener_guion_del_dia(tema, model):
+    """Fuente PRINCIPAL de guiones: el banco escrito a mano (450 guiones,
+    45 por tema, sin repetir hasta agotarlos). Se elige uno por día usando
+    la fecha de Chile, rotando de forma determinística (mismo día = mismo
+    guion, sin necesidad de guardar estado en ningún archivo). Cubre 45
+    días seguidos sin llamar nunca a Gemini, alineado con el ciclo de
+    renovación del token de Threads (~60 días).
+
+    Si por algún motivo el banco no tiene guiones para este tema (no
+    debería pasar), se usa Gemini como respaldo, igual que antes."""
+    from datetime import datetime, timedelta, timezone
+    banco_tema = BANCO_GUIONES.get(tema["id"])
+
+    if banco_tema:
+        offset_chile = timedelta(hours=-4)
+        fecha_chile = (datetime.now(timezone.utc) + offset_chile).date()
+        indice = fecha_chile.toordinal() % len(banco_tema)
+        guion = banco_tema[indice]
+        palabras_clave = extraer_palabras_clave_banco(guion)
+        print(f"📚 Guion del banco para tema '{tema['nombre']}' (día {indice + 1}/{len(banco_tema)}): {guion[:60]}...")
+        return guion, palabras_clave
+
+    print(f"⚠️ No hay guiones en el banco para el tema {tema['id']}, usando Gemini como respaldo.")
+    return generar_guion(tema, model)
+
+
+# ============================================================
 # 2. AUDIO DE NARRACIÓN (edge-tts neuronal, UNA LLAMADA POR FRASE)
 # ============================================================
 def generar_audio_frase(texto_frase, ruta_salida):
@@ -564,6 +635,28 @@ def construir_audio_y_subtitulos(guion, palabras_clave, font):
     return audio_final, subs_final, audio_final.duration
 
 
+def construir_clip_fondo_imagen(ruta_imagen, duracion):
+    """Construye el fondo de un tema a partir de UNA imagen fija, con un
+    zoom lento continuo (efecto Ken Burns) durante toda la duración del
+    reel, para que no se vea estático. Primero se redimensiona la imagen
+    para CUBRIR el lienzo 720x1280 (recortando el sobrante, sin barras
+    negras), y luego se le aplica el zoom sobre ese tamaño ya ajustado."""
+    imagen_base = ImageClip(ruta_imagen).set_duration(duracion)
+
+    ratio_lienzo = W / H
+    ratio_imagen = imagen_base.w / imagen_base.h
+    if ratio_imagen > ratio_lienzo:
+        imagen_base = imagen_base.resize(height=H)
+    else:
+        imagen_base = imagen_base.resize(width=W)
+
+    def factor_zoom(t):
+        return 1 + (ZOOM_FACTOR - 1) * (t / duracion)
+
+    imagen_zoom = imagen_base.resize(factor_zoom).set_position("center")
+    return CompositeVideoClip([imagen_zoom], size=(W, H)).set_duration(duracion)
+
+
 # ============================================================
 # 6. CONSTRUIR VIDEO FINAL DE UN TEMA
 # ============================================================
@@ -587,11 +680,17 @@ def construir_video_tema(tema, guion, palabras_clave, ruta_salida):
     duracion_total = clip_subtitulos.duration
     print(f"   Duración total con CTA final: {duracion_total:.1f}s")
 
-    # --- Video base loopeado hasta cubrir la duración total ---
-    print("🎥 Preparando video base...")
-    video_original = VideoFileClip(VIDEO_BASE_PATH).resize((W, H))
-    n_loops = int(duracion_total // video_original.duration) + 1
-    video_loop = concatenate_videoclips([video_original] * n_loops).subclip(0, duracion_total)
+    # --- Fondo: imagen fija del tema con zoom lento (si existe), o el
+    # video base loopeado como respaldo (comportamiento anterior) ---
+    ruta_imagen_tema = f"{CARPETA_IMAGENES_TEMA}/tema{tema['id']}.jpg"
+    if os.path.exists(ruta_imagen_tema):
+        print(f"🖼️ Preparando fondo con imagen fija del tema (zoom lento): {ruta_imagen_tema}")
+        video_loop = construir_clip_fondo_imagen(ruta_imagen_tema, duracion_total)
+    else:
+        print("🎥 No hay imagen para este tema, usando video base (respaldo)...")
+        video_original = VideoFileClip(VIDEO_BASE_PATH).resize((W, H))
+        n_loops = int(duracion_total // video_original.duration) + 1
+        video_loop = concatenate_videoclips([video_original] * n_loops).subclip(0, duracion_total)
 
     if audio_narracion.duration < duracion_total:
         silencio = AudioClip(lambda t: [0, 0], duration=duracion_total - audio_narracion.duration)
@@ -925,7 +1024,7 @@ def main():
     for tema in temas_a_procesar:
         print(f"\n========== TEMA {tema['id']}: {tema['nombre']} ==========")
         try:
-            guion, palabras_clave = generar_guion(tema, model)
+            guion, palabras_clave = obtener_guion_del_dia(tema, model)
             ruta_salida = f"output/reel_tema{tema['id']}.mp4"
             construir_video_tema(tema, guion, palabras_clave, ruta_salida)
 
