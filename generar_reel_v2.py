@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import time
 import random
 import asyncio
 import unicodedata
@@ -33,6 +34,21 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 FB_ACCESS_TOKEN = os.environ.get("FACEBOOK_ACCESS_TOKEN")
 PAGE_ID = os.environ.get("FACEBOOK_PAGE_ID")
 YOUTUBE_TOKEN_JSON = os.environ.get("YOUTUBE_TOKEN_JSON")
+
+# Instagram: publica usando el mismo token de la Página de Facebook (ya
+# vinculada a la cuenta de Instagram Business/Creator @curiosidades._ia).
+# El ID de abajo es el de esa cuenta, confirmado por la Graph API el 19 jul
+# 2026. Se puede sobreescribir con el secreto INSTAGRAM_BUSINESS_ID si algún
+# día cambia la cuenta vinculada, sin tener que tocar el código.
+IG_USER_ID = os.environ.get("INSTAGRAM_BUSINESS_ID", "17841443907833300")
+
+# GitHub Actions inyecta esto automáticamente en cada ejecución — se usa
+# solo para subir el video a un Release TEMPORAL (ver publicar_instagram_todo)
+# y así darle a la API de Instagram una URL pública de la que pueda
+# descargar el video (su Content Publishing API no acepta subida directa
+# de archivo como sí hace Facebook).
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")
 
 W, H = 720, 1280
 FPS = 24
@@ -620,6 +636,178 @@ def publicar_youtube(ruta_video, titulo, descripcion):
         print(f"❌ Error al publicar en YouTube: {e}")
 
 
+# --- Instagram: helpers de almacenamiento temporal público del video ---
+#
+# La API de publicación de contenido de Instagram (a diferencia de la de
+# Facebook) NO acepta subir el archivo de video directamente: exige una URL
+# pública (video_url) de la que ella misma descarga el archivo. Como este
+# pipeline no tiene ningún servidor propio ($0 de presupuesto), se usa un
+# truco simple: subir el video como asset de un GitHub Release TEMPORAL del
+# mismo repositorio (usando el GITHUB_TOKEN que Actions inyecta automáticamente
+# en cada ejecución), lo que da una URL pública de descarga directa
+# (browser_download_url). Ese release se borra apenas termina de publicarse,
+# pase lo que pase (bloque finally), así no se acumulan releases viejos.
+def subir_video_temporal_github(ruta_video, nombre_archivo):
+    if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
+        raise Exception("Falta GITHUB_TOKEN o GITHUB_REPOSITORY (solo disponibles al correr dentro de GitHub Actions)")
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    tag = f"tmp-video-{int(time.time())}"
+    resp = requests.post(
+        f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases",
+        headers=headers,
+        json={
+            "tag_name": tag,
+            "name": f"Video temporal (auto, para publicar en Instagram)",
+            "body": "Release temporal creado automaticamente por generar_reel_v2.py solo para darle una URL publica al video antes de publicarlo en Instagram. Se borra automaticamente apenas termina.",
+            "draft": False,
+            "prerelease": True,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    release = resp.json()
+    release_id = release["id"]
+    upload_url = release["upload_url"].split("{")[0]
+
+    with open(ruta_video, "rb") as f:
+        video_bytes = f.read()
+
+    resp2 = requests.post(
+        f"{upload_url}?name={nombre_archivo}",
+        headers={**headers, "Content-Type": "video/mp4"},
+        data=video_bytes,
+        timeout=180,
+    )
+    resp2.raise_for_status()
+    asset = resp2.json()
+    print(f"✅ Video subido a release temporal de GitHub: {asset['browser_download_url']}")
+    return release_id, tag, asset["browser_download_url"]
+
+
+def borrar_release_temporal(release_id, tag):
+    """Borra el release y su tag temporal. Se llama SIEMPRE (bloque finally),
+    haya salido bien o mal la publicación en Instagram, para no dejar basura
+    en el repositorio."""
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    try:
+        requests.delete(f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/{release_id}", headers=headers, timeout=30)
+        requests.delete(f"https://api.github.com/repos/{GITHUB_REPOSITORY}/git/refs/tags/{tag}", headers=headers, timeout=30)
+        print("🧹 Release temporal borrado")
+    except Exception as e:
+        print(f"⚠️ No se pudo borrar el release temporal (no es grave, solo queda como basura en el repo): {e}")
+
+
+def _publicar_contenedor_instagram(video_url, media_type, caption=None):
+    """Crea un contenedor de media en Instagram (Reel o Historia), espera a
+    que Instagram termine de descargar/procesar el video, y lo publica.
+    media_type: "REELS" o "STORIES" (las Historias no admiten caption)."""
+    url_contenedor = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+    data = {
+        "media_type": media_type,
+        "video_url": video_url,
+        "access_token": FB_ACCESS_TOKEN,
+    }
+    if caption and media_type != "STORIES":
+        data["caption"] = caption
+
+    resp = requests.post(url_contenedor, data=data, timeout=60)
+    resp.raise_for_status()
+    contenedor_id = resp.json()["id"]
+
+    # Instagram procesa el video de forma asíncrona (lo descarga de video_url,
+    # lo transcodifica, etc.) — hay que esperar a que quede en estado FINISHED
+    # antes de poder publicarlo. Reintenta cada 10s, hasta 5 minutos.
+    url_estado = f"https://graph.facebook.com/v19.0/{contenedor_id}"
+    estado = None
+    for _ in range(30):
+        time.sleep(10)
+        r = requests.get(url_estado, params={"fields": "status_code", "access_token": FB_ACCESS_TOKEN}, timeout=30)
+        estado = r.json().get("status_code")
+        print(f"   [{media_type}] Estado del contenedor de Instagram: {estado}")
+        if estado == "FINISHED":
+            break
+        if estado == "ERROR":
+            raise Exception("El procesamiento del video en Instagram terminó en estado ERROR")
+
+    if estado != "FINISHED":
+        raise Exception(f"Timeout esperando que Instagram procese el video (último estado: {estado})")
+
+    url_publicar = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
+    resp2 = requests.post(url_publicar, data={"creation_id": contenedor_id, "access_token": FB_ACCESS_TOKEN}, timeout=60)
+    resp2.raise_for_status()
+    print(f"✅ Publicado en Instagram ({media_type}):", resp2.json())
+
+
+def publicar_instagram_todo(ruta_video, titulo, descripcion):
+    """Publica el video en Instagram como Reel Y como Historia. Sube el
+    archivo UNA sola vez a un release temporal de GitHub (para no duplicar
+    la subida) y lo borra al final, pase lo que pase."""
+    if not IG_USER_ID:
+        print("⚠️ IG_USER_ID no configurado, se omite publicación en Instagram.")
+        return
+
+    release_id = None
+    tag = None
+    try:
+        nombre_archivo = os.path.basename(ruta_video)
+        print("📤 Subiendo video a almacenamiento temporal (GitHub Release) para Instagram...")
+        release_id, tag, video_url = subir_video_temporal_github(ruta_video, nombre_archivo)
+
+        caption = f"{titulo}\n\n{descripcion}\n\n#motivacion #superacion #reflexion #psicologia"
+        _publicar_contenedor_instagram(video_url, "REELS", caption=caption)
+        _publicar_contenedor_instagram(video_url, "STORIES")
+
+    except Exception as e:
+        print(f"❌ Error al publicar en Instagram: {e}")
+    finally:
+        if release_id:
+            borrar_release_temporal(release_id, tag)
+
+
+# --- Facebook: Historia (Story) ---
+# Endpoint dedicado /{page-id}/video_stories, en dos fases: "start" (crea el
+# video_id y una upload_url) y "finish" (confirma y publica como Historia,
+# una vez subido el binario). A diferencia de Instagram, Facebook sí acepta
+# subir el archivo directo (no hace falta URL pública ni release temporal).
+def publicar_historia_facebook(ruta_video):
+    try:
+        url_stories = f"https://graph.facebook.com/v19.0/{PAGE_ID}/video_stories"
+
+        resp = requests.post(url_stories, data={"upload_phase": "start", "access_token": FB_ACCESS_TOKEN}, timeout=30)
+        resp.raise_for_status()
+        info = resp.json()
+        video_id = info["video_id"]
+        upload_url = info["upload_url"]
+
+        with open(ruta_video, "rb") as f:
+            video_bytes = f.read()
+
+        headers_subida = {
+            "Authorization": f"OAuth {FB_ACCESS_TOKEN}",
+            "offset": "0",
+            "file_size": str(len(video_bytes)),
+        }
+        r2 = requests.post(upload_url, headers=headers_subida, data=video_bytes, timeout=180)
+        r2.raise_for_status()
+
+        r3 = requests.post(url_stories, data={
+            "upload_phase": "finish",
+            "video_id": video_id,
+            "access_token": FB_ACCESS_TOKEN,
+        }, timeout=30)
+        r3.raise_for_status()
+        print("✅ Historia publicada en Facebook:", r3.json())
+    except Exception as e:
+        print(f"❌ Error al publicar Historia en Facebook: {e}")
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -646,6 +834,8 @@ def main():
                 descripcion = guion
                 publicar_facebook(ruta_salida, titulo, descripcion)
                 publicar_youtube(ruta_salida, titulo, descripcion)
+                publicar_instagram_todo(ruta_salida, titulo, descripcion)
+                publicar_historia_facebook(ruta_salida)
             else:
                 print("⏭️ --no-publicar activado, video generado pero no publicado.")
 
