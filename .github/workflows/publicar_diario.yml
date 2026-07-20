@@ -17,12 +17,13 @@ name: Generar y Publicar Reel Diario
 # estado_publicaciones.json (en la raiz del repo, se actualiza solo).
 #
 # Horario de referencia (hora Chile, invierno UTC-4) -- ver tambien
-# scripts/verificar_horario.py, que es la fuente real de la logica:
-# Tema 1  -> 8:00   | Tema 6  -> 16:00
-# Tema 2  -> 9:36   | Tema 7  -> 17:36
-# Tema 3  -> 11:12  | Tema 8  -> 19:12
-# Tema 4  -> 12:48  | Tema 9  -> 20:48
-# Tema 5  -> 14:24  | Tema 10 -> 22:24
+# scripts/verificar_horario.py, que es la fuente real de la logica.
+# Distribuido cada 2h24min a lo largo de las 24 horas (incluye madrugada):
+# Tema 1  -> 0:00   | Tema 6  -> 12:00
+# Tema 2  -> 2:24   | Tema 7  -> 14:24
+# Tema 3  -> 4:48   | Tema 8  -> 16:48
+# Tema 4  -> 7:12   | Tema 9  -> 19:12
+# Tema 5  -> 9:36   | Tema 10 -> 21:36
 #
 # OJO horario de verano: cuando Chile pase a UTC-3 (oct-mar), hay que
 # cambiar OFFSET_CHILE en scripts/verificar_horario.py de -4 a -3 horas
