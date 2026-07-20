@@ -1,0 +1,18 @@
+name: Diagnostico Token 5
+on:
+  workflow_dispatch:
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar token de Facebook (caducidad, permisos, Instagram vinculado)
+        env:
+          FACEBOOK_ACCESS_TOKEN: ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+        run: |
+          echo "== Pagina + Instagram vinculado =="
+          curl -s "https://graph.facebook.com/v19.0/$FACEBOOK_PAGE_ID?fields=name,instagram_business_account&access_token=$FACEBOOK_ACCESS_TOKEN"
+          echo ""
+          echo "== Info del token (debug_token) =="
+          curl -s "https://graph.facebook.com/v19.0/debug_token?input_token=$FACEBOOK_ACCESS_TOKEN&access_token=$FACEBOOK_ACCESS_TOKEN"
+          echo ""
