@@ -633,7 +633,7 @@ def publicar_youtube(ruta_video, titulo, descripcion):
                 "tags": ["motivacion", "superacion", "psicologia", "shorts", "reflexion"],
                 "categoryId": "22",
             },
-            "status": {"privacyStatus": "unlisted", "selfDeclaredMadeForKids": False},
+            "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False},
         }
         media = MediaFileUpload(ruta_video, chunksize=-1, resumable=True)
         req = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
