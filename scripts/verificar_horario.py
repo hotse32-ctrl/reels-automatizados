@@ -23,16 +23,16 @@ ARCHIVO_ESTADO = "estado_publicaciones.json"
 # local -- si no se ajusta, todo se correra 1 hora mas tarde en la
 # practica (no se pierde nada, solo se publica una hora "tarde").
 HORARIOS_CHILE = [
-    (1, 8, 0),
-    (2, 9, 36),
-    (3, 11, 12),
-    (4, 12, 48),
-    (5, 14, 24),
-    (6, 16, 0),
-    (7, 17, 36),
-    (8, 19, 12),
-    (9, 20, 48),
-    (10, 22, 24),
+    (1, 0, 0),
+    (2, 2, 24),
+    (3, 4, 48),
+    (4, 7, 12),
+    (5, 9, 36),
+    (6, 12, 0),
+    (7, 14, 24),
+    (8, 16, 48),
+    (9, 19, 12),
+    (10, 21, 36),
 ]
 
 OFFSET_CHILE = timedelta(hours=-4)
