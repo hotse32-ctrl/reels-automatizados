@@ -39,6 +39,18 @@ on:
         required: false
         default: ''
 
+# IMPORTANTE: con el cron cada 15 min, a veces GitHub dispara dos runs
+# casi al mismo tiempo (paso el 20 jul 2026: dos runs leyeron el estado
+# ANTES de que el otro alcanzara a guardar "ya publicado", y el mismo
+# tema salio duplicado en las 5 plataformas). Este bloque de concurrencia
+# obliga a que nunca corran dos ejecuciones de este workflow al mismo
+# tiempo -- si dos disparos caen juntos, el segundo espera en cola a que
+# el primero termine (y haga su commit del estado) antes de empezar, asi
+# siempre lee el estado mas reciente y nunca vuelve a duplicar un tema.
+concurrency:
+  group: publicar-diario-reel
+  cancel-in-progress: false
+
 # contents: write es necesario para que GITHUB_TOKEN pueda: (a) crear y
 # borrar el Release temporal que usa publicar_instagram_todo() para darle
 # a Instagram/Threads una URL publica del video, y (b) commitear
