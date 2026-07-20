@@ -50,6 +50,13 @@ IG_USER_ID = os.environ.get("INSTAGRAM_BUSINESS_ID", "17841443907833300")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")
 
+# Threads: token de larga duración (60 días) generado como Threads Tester
+# de la app "Reels Automatizados IA" en modo desarrollo (no requiere
+# revisión de Meta porque solo publica en esta misma cuenta). OJO: a
+# diferencia del token de Página de Facebook, este SÍ caduca a los 60 días
+# y hay que regenerarlo a mano periódicamente (ver credenciales_reels.md).
+THREADS_ACCESS_TOKEN = os.environ.get("THREADS_ACCESS_TOKEN")
+
 W, H = 720, 1280
 FPS = 24
 VIDEO_BASE_PATH = "assets/video_base.mp4"
@@ -808,6 +815,65 @@ def publicar_historia_facebook(ruta_video):
         print(f"❌ Error al publicar Historia en Facebook: {e}")
 
 
+# --- Threads: publicación de video ---
+# API separada de Facebook/Instagram (graph.threads.net, no graph.facebook.com),
+# pero el flujo es muy parecido: crear un contenedor de media con una URL
+# pública de video, esperar a que termine de procesarse, y publicarlo.
+# Threads no tiene Historias, solo publicaciones normales (como un post).
+# Reutiliza el mismo mecanismo de release temporal de GitHub que Instagram
+# para conseguir la URL pública del video.
+def publicar_threads(ruta_video, titulo, descripcion):
+    if not THREADS_ACCESS_TOKEN:
+        print("⚠️ THREADS_ACCESS_TOKEN no configurado, se omite publicación en Threads.")
+        return
+
+    release_id = None
+    tag = None
+    try:
+        nombre_archivo = os.path.basename(ruta_video)
+        print("📤 Subiendo video a almacenamiento temporal (GitHub Release) para Threads...")
+        release_id, tag, video_url = subir_video_temporal_github(ruta_video, nombre_archivo)
+
+        texto = f"{titulo}\n\n{descripcion}"[:500]  # Threads limita el texto a 500 caracteres
+
+        url_contenedor = "https://graph.threads.net/v1.0/me/threads"
+        resp = requests.post(url_contenedor, data={
+            "media_type": "VIDEO",
+            "video_url": video_url,
+            "text": texto,
+            "access_token": THREADS_ACCESS_TOKEN,
+        }, timeout=60)
+        resp.raise_for_status()
+        contenedor_id = resp.json()["id"]
+
+        # Igual que Instagram: Threads procesa el video de forma asíncrona.
+        url_estado = f"https://graph.threads.net/v1.0/{contenedor_id}"
+        estado = None
+        for _ in range(30):
+            time.sleep(10)
+            r = requests.get(url_estado, params={"fields": "status", "access_token": THREADS_ACCESS_TOKEN}, timeout=30)
+            estado = r.json().get("status")
+            print(f"   [THREADS] Estado del contenedor: {estado}")
+            if estado == "FINISHED":
+                break
+            if estado == "ERROR":
+                raise Exception("El procesamiento del video en Threads terminó en estado ERROR")
+
+        if estado != "FINISHED":
+            raise Exception(f"Timeout esperando que Threads procese el video (último estado: {estado})")
+
+        url_publicar = "https://graph.threads.net/v1.0/me/threads_publish"
+        resp2 = requests.post(url_publicar, data={"creation_id": contenedor_id, "access_token": THREADS_ACCESS_TOKEN}, timeout=60)
+        resp2.raise_for_status()
+        print("✅ Publicado en Threads:", resp2.json())
+
+    except Exception as e:
+        print(f"❌ Error al publicar en Threads: {e}")
+    finally:
+        if release_id:
+            borrar_release_temporal(release_id, tag)
+
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -836,6 +902,7 @@ def main():
                 publicar_youtube(ruta_salida, titulo, descripcion)
                 publicar_instagram_todo(ruta_salida, titulo, descripcion)
                 publicar_historia_facebook(ruta_salida)
+                publicar_threads(ruta_salida, titulo, descripcion)
             else:
                 print("⏭️ --no-publicar activado, video generado pero no publicado.")
 
