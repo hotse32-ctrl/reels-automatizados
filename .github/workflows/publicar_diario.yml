@@ -1,47 +1,48 @@
 name: Generar y Publicar Reel Diario
 
-# 10 publicaciones al dia, una por tema, en el horario pedido por Jose
-# (primer video a las 8:00 hora Chile, siguientes cada 1h36m).
-# Los horarios de cron son en UTC. Conversion usada (invierno en Chile,
-# UTC-4): hora Chile + 4 horas = hora UTC.
-# OJO: cuando Chile entre en horario de verano (UTC-3, oct-mar) estos
-# crons van a publicar 1 hora mas tarde en hora local -- hay que restar
-# 1 hora a cada uno (o sumar 3 en vez de 4) si se quiere mantener la
-# misma hora local todo el ano.
+# ANTES usabamos 10 cron distintos, uno por cada horario exacto. GitHub
+# Actions a veces retrasa o directamente se salta ejecuciones programadas
+# cuando hay mucha carga en su cola global de "scheduled workflows" (le
+# paso a Jose el 20 jul 2026: dos temas del dia nunca se publicaron).
 #
-# Tema 1  -> 8:00  Chile -> 12:00 UTC
-# Tema 2  -> 9:36  Chile -> 13:36 UTC
-# Tema 3  -> 11:12 Chile -> 15:12 UTC
-# Tema 4  -> 12:48 Chile -> 16:48 UTC
-# Tema 5  -> 14:24 Chile -> 18:24 UTC
-# Tema 6  -> 16:00 Chile -> 20:00 UTC
-# Tema 7  -> 17:36 Chile -> 21:36 UTC
-# Tema 8  -> 19:12 Chile -> 23:12 UTC
-# Tema 9  -> 20:48 Chile -> 00:48 UTC (dia siguiente)
-# Tema 10 -> 22:24 Chile -> 02:24 UTC (dia siguiente)
+# AHORA usamos UN SOLO cron que corre cada 15 minutos, todo el dia. Cada
+# vez que corre, verificar_horario.py revisa si algun tema del horario de
+# abajo ya deberia haberse publicado hoy (hora Chile) y todavia no se
+# publico -- si es asi, lo publica en ese momento. Si no hay nada
+# pendiente, el workflow termina casi al instante sin instalar nada ni
+# gastar minutos de Actions. Asi nunca se pierde un tema por completo,
+# como maximo sale hasta ~15 minutos mas tarde de lo ideal.
+#
+# El estado de que temas ya se publicaron hoy se guarda en
+# estado_publicaciones.json (en la raiz del repo, se actualiza solo).
+#
+# Horario de referencia (hora Chile, invierno UTC-4) -- ver tambien
+# scripts/verificar_horario.py, que es la fuente real de la logica:
+# Tema 1  -> 8:00   | Tema 6  -> 16:00
+# Tema 2  -> 9:36   | Tema 7  -> 17:36
+# Tema 3  -> 11:12  | Tema 8  -> 19:12
+# Tema 4  -> 12:48  | Tema 9  -> 20:48
+# Tema 5  -> 14:24  | Tema 10 -> 22:24
+#
+# OJO horario de verano: cuando Chile pase a UTC-3 (oct-mar), hay que
+# cambiar OFFSET_CHILE en scripts/verificar_horario.py de -4 a -3 horas
+# para mantener la misma hora local (si no, todo sale 1 hora mas tarde,
+# no se pierde nada, solo se corre el horario).
 
 on:
   schedule:
-    - cron: '0 12 * * *'
-    - cron: '36 13 * * *'
-    - cron: '12 15 * * *'
-    - cron: '48 16 * * *'
-    - cron: '24 18 * * *'
-    - cron: '0 20 * * *'
-    - cron: '36 21 * * *'
-    - cron: '12 23 * * *'
-    - cron: '48 0 * * *'
-    - cron: '24 2 * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       tema:
-        description: 'ID del tema a publicar (1-10). Vacio = automatico segun el horario que disparo el run.'
+        description: 'ID del tema a publicar (1-10). Vacio = automatico segun el horario (solo si hay uno pendiente ahora).'
         required: false
         default: ''
 
-# contents: write es necesario para que GITHUB_TOKEN pueda crear y borrar
-# el Release temporal que usa publicar_instagram_todo() en generar_reel_v2.py
-# para darle a la API de Instagram una URL publica del video.
+# contents: write es necesario para que GITHUB_TOKEN pueda: (a) crear y
+# borrar el Release temporal que usa publicar_instagram_todo() para darle
+# a Instagram/Threads una URL publica del video, y (b) commitear
+# estado_publicaciones.json despues de cada publicacion automatica.
 permissions:
   contents: write
 
@@ -58,41 +59,29 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Determinar tema segun el horario que disparo este run
+      - name: Verificar si hay un tema pendiente segun el horario
+        id: verificar
+        run: python scripts/verificar_horario.py
+
+      - name: Determinar tema a publicar (manual o automatico)
         id: tema
+        if: steps.verificar.outputs.hay_pendiente == 'true' || github.event.inputs.tema != ''
         run: |
           if [ -n "${{ github.event.inputs.tema }}" ]; then
             echo "id=${{ github.event.inputs.tema }}" >> "$GITHUB_OUTPUT"
           else
-            case "${{ github.event.schedule }}" in
-              "0 12 * * *") echo "id=1" >> "$GITHUB_OUTPUT" ;;
-              "36 13 * * *") echo "id=2" >> "$GITHUB_OUTPUT" ;;
-              "12 15 * * *") echo "id=3" >> "$GITHUB_OUTPUT" ;;
-              "48 16 * * *") echo "id=4" >> "$GITHUB_OUTPUT" ;;
-              "24 18 * * *") echo "id=5" >> "$GITHUB_OUTPUT" ;;
-              "0 20 * * *") echo "id=6" >> "$GITHUB_OUTPUT" ;;
-              "36 21 * * *") echo "id=7" >> "$GITHUB_OUTPUT" ;;
-              "12 23 * * *") echo "id=8" >> "$GITHUB_OUTPUT" ;;
-              "48 0 * * *") echo "id=9" >> "$GITHUB_OUTPUT" ;;
-              "24 2 * * *") echo "id=10" >> "$GITHUB_OUTPUT" ;;
-              *) echo "id=1" >> "$GITHUB_OUTPUT" ;;
-            esac
+            echo "id=${{ steps.verificar.outputs.tema_id }}" >> "$GITHUB_OUTPUT"
           fi
-          echo "Tema elegido: $(cat $GITHUB_OUTPUT | tail -n1)"
-
-      - name: Esperar un desfase aleatorio (5 a 20 minutos, para que no sea siempre exacto)
-        run: |
-          MINUTOS=$(( (RANDOM % 16) + 5 ))
-          echo "Esperando $MINUTOS minutos antes de generar y publicar..."
-          sleep "$((MINUTOS * 60))"
 
       - name: Instalar dependencias
+        if: steps.tema.outputs.id != ''
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           pip install requests google-generativeai Pillow numpy "moviepy==1.0.3" imageio_ffmpeg edge-tts google-auth-oauthlib google-api-python-client
 
       - name: Generar y publicar (Tema ${{ steps.tema.outputs.id }})
+        if: steps.tema.outputs.id != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FACEBOOK_ACCESS_TOKEN: ${{ secrets.FACEBOOK_ACCESS_TOKEN }}
@@ -103,7 +92,19 @@ jobs:
         run: python generar_reel_v2.py --tema ${{ steps.tema.outputs.id }}
 
       - name: Subir video generado (artefacto, por si falla la publicacion)
+        if: steps.tema.outputs.id != ''
         uses: actions/upload-artifact@v4
         with:
           name: video-tema-${{ steps.tema.outputs.id }}-run${{ github.run_number }}
           path: output/*.mp4
+
+      - name: Marcar tema como publicado (solo en runs automaticos)
+        if: steps.tema.outputs.id != '' && github.event.inputs.tema == ''
+        run: |
+          python scripts/marcar_publicado.py ${{ steps.tema.outputs.id }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add estado_publicaciones.json
+          git commit -m "Marca Tema ${{ steps.tema.outputs.id }} como publicado hoy" || echo "Sin cambios que commitear"
+          git pull --rebase
+          git push
