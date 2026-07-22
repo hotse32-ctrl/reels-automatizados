@@ -1008,6 +1008,92 @@ def publicar_threads(ruta_video, titulo, descripcion):
 
 
 # ============================================================
+# 8. GOOGLE DRIVE (subida manual pausada de Facebook/Instagram/Threads)
+# ============================================================
+# Mientras el token de Facebook esta roto (ver credenciales_reels.md, 21 jul
+# 2026), el video se sube a una carpeta de Drive organizada por dia para que
+# Jose lo publique el mismo a mano en Facebook, Instagram y Threads. YouTube
+# sigue publicandose solo, automatico, sin cambios.
+#
+# Usa una cuenta de servicio (GOOGLE_DRIVE_SA_JSON, sin login ni consentimiento
+# manual cada vez) que debe tener permiso de Editor sobre la carpeta raiz
+# GOOGLE_DRIVE_FOLDER_ID (compartida una sola vez desde Drive con el correo
+# de la cuenta de servicio).
+#
+# Estructura en Drive: una subcarpeta por fecha (YYYY-MM-DD, hora Chile),
+# y dentro el archivo nombrado "HH-MM_TemaN_nombre-del-tema.mp4" -- asi Jose
+# ve de un vistazo la hora y el tema exactos sin tener que abrir el video.
+GOOGLE_DRIVE_SA_JSON = os.environ.get("GOOGLE_DRIVE_SA_JSON")
+GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
+
+
+def _slug(texto):
+    texto = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+    texto = re.sub(r"[^a-zA-Z0-9]+", "-", texto).strip("-").lower()
+    return texto
+
+
+def subir_a_drive(ruta_video, tema):
+    """Sube el video a Drive en una subcarpeta del dia (hora Chile), creandola
+    si no existe. No falla el proceso completo si Drive no esta configurado
+    o si algo sale mal -- solo avisa, porque YouTube ya se publico solo."""
+    if not GOOGLE_DRIVE_SA_JSON or not GOOGLE_DRIVE_FOLDER_ID:
+        print("⚠️ Google Drive no configurado (faltan GOOGLE_DRIVE_SA_JSON o GOOGLE_DRIVE_FOLDER_ID), se omite subida a Drive.")
+        return
+
+    try:
+        import json as _json
+        from datetime import datetime, timedelta, timezone
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+
+        creds_info = _json.loads(GOOGLE_DRIVE_SA_JSON)
+        creds = service_account.Credentials.from_service_account_info(
+            creds_info, scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        drive = build("drive", "v3", credentials=creds)
+
+        ahora_chile = datetime.now(timezone.utc) + timedelta(hours=-4)
+        nombre_carpeta_dia = ahora_chile.strftime("%Y-%m-%d")
+
+        # Buscar (o crear) la subcarpeta del dia dentro de la carpeta raiz.
+        query = (
+            f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents and name = '{nombre_carpeta_dia}' "
+            "and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        )
+        resultado = drive.files().list(q=query, fields="files(id)").execute()
+        archivos = resultado.get("files", [])
+        if archivos:
+            carpeta_dia_id = archivos[0]["id"]
+        else:
+            carpeta = drive.files().create(
+                body={
+                    "name": nombre_carpeta_dia,
+                    "mimeType": "application/vnd.google-apps.folder",
+                    "parents": [GOOGLE_DRIVE_FOLDER_ID],
+                },
+                fields="id",
+            ).execute()
+            carpeta_dia_id = carpeta["id"]
+            print(f"📁 Carpeta de Drive creada para hoy: {nombre_carpeta_dia}")
+
+        hora_str = ahora_chile.strftime("%H-%M")
+        nombre_archivo = f"{hora_str}_Tema{tema['id']}_{_slug(tema['nombre'])}.mp4"
+
+        media = MediaFileUpload(ruta_video, mimetype="video/mp4", resumable=True)
+        drive.files().create(
+            body={"name": nombre_archivo, "parents": [carpeta_dia_id]},
+            media_body=media,
+            fields="id",
+        ).execute()
+        print(f"✅ Video subido a Drive: {nombre_carpeta_dia}/{nombre_archivo}")
+
+    except Exception as e:
+        print(f"❌ Error al subir a Google Drive: {e}")
+
+
+# ============================================================
 # MAIN
 # ============================================================
 def main():
@@ -1031,11 +1117,21 @@ def main():
             if not args.no_publicar:
                 titulo = tema["nombre"]
                 descripcion = guion
-                publicar_facebook(ruta_salida, titulo, descripcion)
+
+                # PAUSADO el 21 jul 2026: el token de Facebook quedo invalido
+                # (ver credenciales_reels.md), asi que Facebook/Instagram/
+                # Threads NO se publican solos por ahora -- se prueban 2 dias
+                # solo con YouTube automatico, mientras Jose sube el video a
+                # esas 3 plataformas a mano desde la carpeta de Drive.
+                # Para reactivarlas: descomentar las 4 lineas de abajo (no
+                # requiere ningun otro cambio, la logica sigue intacta).
+                # publicar_facebook(ruta_salida, titulo, descripcion)
+                # publicar_instagram_todo(ruta_salida, titulo, descripcion)
+                # publicar_historia_facebook(ruta_salida)
+                # publicar_threads(ruta_salida, titulo, descripcion)
+
                 publicar_youtube(ruta_salida, titulo, descripcion)
-                publicar_instagram_todo(ruta_salida, titulo, descripcion)
-                publicar_historia_facebook(ruta_salida)
-                publicar_threads(ruta_salida, titulo, descripcion)
+                subir_a_drive(ruta_salida, tema)
             else:
                 print("⏭️ --no-publicar activado, video generado pero no publicado.")
 
