@@ -1023,7 +1023,15 @@ def publicar_threads(ruta_video, titulo, descripcion):
 # Estructura en Drive: una subcarpeta por fecha (YYYY-MM-DD, hora Chile),
 # y dentro el archivo nombrado "HH-MM_TemaN_nombre-del-tema.mp4" -- asi Jose
 # ve de un vistazo la hora y el tema exactos sin tener que abrir el video.
-GOOGLE_DRIVE_SA_JSON = os.environ.get("GOOGLE_DRIVE_SA_JSON")
+#
+# NOTA (22 jul 2026): se probo primero con una cuenta de servicio, pero
+# Google la rechazo con "Service Accounts do not have storage quota" --
+# las cuentas de servicio no pueden escribir en un Drive personal normal
+# (@gmail.com), solo en "Unidades compartidas" (funcion exclusiva de Google
+# Workspace, que esta cuenta no tiene). Se cambio a OAuth con la propia
+# cuenta de Jose (mismo mecanismo que ya usa YOUTUBE_TOKEN_JSON), asi el
+# archivo se sube directamente a su Drive sin problema de cuota.
+GOOGLE_DRIVE_TOKEN_JSON = os.environ.get("GOOGLE_DRIVE_TOKEN_JSON")
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
 
 
@@ -1037,21 +1045,19 @@ def subir_a_drive(ruta_video, tema):
     """Sube el video a Drive en una subcarpeta del dia (hora Chile), creandola
     si no existe. No falla el proceso completo si Drive no esta configurado
     o si algo sale mal -- solo avisa, porque YouTube ya se publico solo."""
-    if not GOOGLE_DRIVE_SA_JSON or not GOOGLE_DRIVE_FOLDER_ID:
-        print("⚠️ Google Drive no configurado (faltan GOOGLE_DRIVE_SA_JSON o GOOGLE_DRIVE_FOLDER_ID), se omite subida a Drive.")
+    if not GOOGLE_DRIVE_TOKEN_JSON or not GOOGLE_DRIVE_FOLDER_ID:
+        print("⚠️ Google Drive no configurado (faltan GOOGLE_DRIVE_TOKEN_JSON o GOOGLE_DRIVE_FOLDER_ID), se omite subida a Drive.")
         return
 
     try:
-        import json as _json
         from datetime import datetime, timedelta, timezone
-        from google.oauth2 import service_account
+        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
         from googleapiclient.http import MediaFileUpload
 
-        creds_info = _json.loads(GOOGLE_DRIVE_SA_JSON)
-        creds = service_account.Credentials.from_service_account_info(
-            creds_info, scopes=["https://www.googleapis.com/auth/drive"]
-        )
+        with open("drive_token.json", "w") as f:
+            f.write(GOOGLE_DRIVE_TOKEN_JSON)
+        creds = Credentials.from_authorized_user_file("drive_token.json")
         drive = build("drive", "v3", credentials=creds)
 
         ahora_chile = datetime.now(timezone.utc) + timedelta(hours=-4)
