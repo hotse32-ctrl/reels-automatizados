@@ -1132,9 +1132,9 @@ def main():
                 # Para reactivarlas: descomentar las 4 lineas de abajo (no
                 # requiere ningun otro cambio, la logica sigue intacta).
                 # publicar_facebook(ruta_salida, titulo, descripcion)
-                # publicar_instagram_todo(ruta_salida, titulo, descripcion)
+                publicar_instagram_todo(ruta_salida, titulo, descripcion)
                 # publicar_historia_facebook(ruta_salida)
-                # publicar_threads(ruta_salida, titulo, descripcion)
+                publicar_threads(ruta_salida, titulo, descripcion)
 
                 publicar_youtube(ruta_salida, titulo, descripcion)
                 subir_a_drive(ruta_salida, tema)
