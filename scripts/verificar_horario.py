@@ -23,7 +23,7 @@ ARCHIVO_ESTADO = "estado_publicaciones.json"
 # local -- si no se ajusta, todo se correra 1 hora mas tarde en la
 # practica (no se pierde nada, solo se publica una hora "tarde").
 HORARIOS_CHILE = [
-    (1, 0, 0),
+    (1, 23, 15),
     (2, 2, 24),
     (3, 4, 48),
     (4, 7, 12),
