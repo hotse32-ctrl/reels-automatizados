@@ -5,13 +5,13 @@ name: Generar y Publicar Reel Diario
 # cuando hay mucha carga en su cola global de "scheduled workflows" (le
 # paso a Jose el 20 jul 2026: dos temas del dia nunca se publicaron).
 #
-# AHORA usamos UN SOLO cron que corre cada 15 minutos, todo el dia. Cada
+# AHORA usamos UN SOLO cron que corre cada 30 minutos, todo el dia. Cada
 # vez que corre, verificar_horario.py revisa si algun tema del horario de
 # abajo ya deberia haberse publicado hoy (hora Chile) y todavia no se
 # publico -- si es asi, lo publica en ese momento. Si no hay nada
 # pendiente, el workflow termina casi al instante sin instalar nada ni
 # gastar minutos de Actions. Asi nunca se pierde un tema por completo,
-# como maximo sale hasta ~15 minutos mas tarde de lo ideal.
+# como maximo sale hasta ~30 minutos mas tarde de lo ideal.
 #
 # El estado de que temas ya se publicaron hoy se guarda en
 # estado_publicaciones.json (en la raiz del repo, se actualiza solo).
@@ -32,7 +32,7 @@ name: Generar y Publicar Reel Diario
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       tema:
