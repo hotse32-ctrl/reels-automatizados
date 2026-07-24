@@ -196,8 +196,8 @@ TEMAS = [
 # UTILIDADES DE TEXTO
 # ============================================================
 def quitar_ene(texto):
-    """Función en desuso: ya NO se exige la ausencia de Ñ/ñ. Se deja solo por compatibilidad."""
-    return True
+    """Devuelve True si el texto NO contiene ninguna Ñ/ñ (válido)."""
+    return "ñ" not in texto.lower()
 
 
 def normalizar_palabra(p):
@@ -291,7 +291,7 @@ ENFOQUE OBLIGATORIO PARA ESTE GUION EN PARTICULAR (síguelo, es lo que lo hace d
 
 REGLAS OBLIGATORIAS:
 1. Entre 66 y 70 palabras en total (cuéntalas una por una antes de responder).
-2. Se PERMITE y se PREFIERE usar correctamente la letra "Ñ"/"ñ" cuando la palabra la lleva (ej: "año", "pequeño", "señal", "compañía"). Escríbela siempre bien puesta, nunca la omitas ni la reemplaces por "n" (por ejemplo, JAMÁS escribas "ano" en vez de "año" — son palabras completamente distintas y una de ellas es vulgar).
+2. PROHIBIDO usar la letra "Ñ" o "ñ" en cualquier palabra, sin excepción. Evita por completo palabras como "año", "pequeño", "señal", "compañía" — reemplázalas por sinónimos SIN ñ que mantengan el significado correcto (ej: "pequeño" → "chico", "señal" → "muestra", "compañía" → "presencia", "año" → "ciclo" o reformula la frase). IMPORTANTE: nunca le quites la ñ a una palabra dejándola mal escrita (por ejemplo, JAMÁS escribas "ano" en vez de "año" — son palabras completamente distintas y una de ellas es vulgar). Si no encuentras un sinónimo natural, reformula toda la frase para evitar esa palabra.
 3. PROHIBIDO usar punto tras cada frase corta. Usa comas y puntos seguidos para dar fluidez natural. El punto solo va al final de una idea completa.
 4. COMBINACIÓN RETÓRICA OBLIGATORIA PARA ESTE GUION (usa SOLO los elementos que se indican aquí, no agregues los que no se piden): {combinacion}
 5. Marca entre 5 y 7 "palabras clave" del guion. Deben ser SUSTANTIVOS o VERBOS de acción (no adjetivos ni conectores). Deben aparecer en posiciones de impacto: inicio o final de frase, o en la repetición eco.
@@ -313,6 +313,11 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
             data = json.loads(texto)
             guion = data["guion"].strip()
             palabras_clave = [normalizar_palabra(p) for p in data.get("palabras_clave", [])]
+
+            if not quitar_ene(guion):
+                ultimo_error = "El guion generado contiene la letra Ñ"
+                print(f"⚠️ Intento {intento+1}: {ultimo_error}, reintentando...")
+                continue
 
             num_palabras = len(guion.split())
             if num_palabras < 66 or num_palabras > 70:
@@ -853,7 +858,8 @@ def _publicar_contenedor_instagram(video_url, media_type, caption=None):
         data["caption"] = caption
 
     resp = requests.post(url_contenedor, data=data, timeout=60)
-    resp.raise_for_status()
+    if not resp.ok:
+        raise Exception(f"Instagram rechazo la creacion del contenedor ({resp.status_code}): {resp.text}")
     contenedor_id = resp.json()["id"]
 
     # Instagram procesa el video de forma asíncrona (lo descarga de video_url,
@@ -876,7 +882,8 @@ def _publicar_contenedor_instagram(video_url, media_type, caption=None):
 
     url_publicar = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
     resp2 = requests.post(url_publicar, data={"creation_id": contenedor_id, "access_token": FB_ACCESS_TOKEN}, timeout=60)
-    resp2.raise_for_status()
+    if not resp2.ok:
+        raise Exception(f"Instagram rechazo la publicacion del contenedor ({resp2.status_code}): {resp2.text}")
     print(f"✅ Publicado en Instagram ({media_type}):", resp2.json())
 
 
@@ -1127,9 +1134,9 @@ def main():
                 # Para reactivarlas: descomentar las 4 lineas de abajo (no
                 # requiere ningun otro cambio, la logica sigue intacta).
                 # publicar_facebook(ruta_salida, titulo, descripcion)
-                publicar_instagram_todo(ruta_salida, titulo, descripcion)
+                # publicar_instagram_todo(ruta_salida, titulo, descripcion)
                 # publicar_historia_facebook(ruta_salida)
-                publicar_threads(ruta_salida, titulo, descripcion)
+                # publicar_threads(ruta_salida, titulo, descripcion)
 
                 publicar_youtube(ruta_salida, titulo, descripcion)
                 subir_a_drive(ruta_salida, tema)
