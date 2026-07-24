@@ -1126,17 +1126,16 @@ def main():
                 titulo = tema["nombre"]
                 descripcion = guion
 
-                # PAUSADO el 21 jul 2026: el token de Facebook quedo invalido
-                # (ver credenciales_reels.md), asi que Facebook/Instagram/
-                # Threads NO se publican solos por ahora -- se prueban 2 dias
-                # solo con YouTube automatico, mientras Jose sube el video a
-                # esas 3 plataformas a mano desde la carpeta de Drive.
-                # Para reactivarlas: descomentar las 4 lineas de abajo (no
-                # requiere ningun otro cambio, la logica sigue intacta).
+                # Facebook (feed + Historia) sigue pausado desde el 21 jul 2026
+                # (token de Pagina invalido, ver credenciales_reels.md). Se
+                # reactivo Instagram y Threads el 23 jul 2026 (commit 65ba508),
+                # reactivacion que se habia revertido sin querer el 23 jul al
+                # subir un fix de ortografia basado en una copia vieja del
+                # archivo -- restaurado el 24 jul 2026.
                 # publicar_facebook(ruta_salida, titulo, descripcion)
-                # publicar_instagram_todo(ruta_salida, titulo, descripcion)
+                publicar_instagram_todo(ruta_salida, titulo, descripcion)
                 # publicar_historia_facebook(ruta_salida)
-                # publicar_threads(ruta_salida, titulo, descripcion)
+                publicar_threads(ruta_salida, titulo, descripcion)
 
                 publicar_youtube(ruta_salida, titulo, descripcion)
                 subir_a_drive(ruta_salida, tema)
