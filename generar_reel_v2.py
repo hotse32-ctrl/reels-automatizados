@@ -677,7 +677,9 @@ def main():
             if not args.no_publicar:
                 titulo = tema["nombre"]
                 descripcion = guion
-                publicar_facebook(ruta_salida, titulo, descripcion)
+                # Solo YouTube por ahora (pedido explicito de Jose, 31 jul 2026).
+                # Facebook queda desactivado aqui pero la funcion publicar_facebook()
+                # se deja intacta por si se quiere reactivar mas adelante.
                 publicar_youtube(ruta_salida, titulo, descripcion)
             else:
                 print("⏭️ --no-publicar activado, video generado pero no publicado.")
