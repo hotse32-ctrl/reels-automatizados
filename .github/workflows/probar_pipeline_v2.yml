@@ -30,11 +30,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          pip install requests google-generativeai Pillow numpy "moviepy==1.0.3" imageio_ffmpeg edge-tts
+          pip install requests google-generativeai Pillow numpy "moviepy==1.0.3" imageio_ffmpeg edge-tts google-auth-oauthlib google-auth google-api-python-client python-docx
 
       - name: Ejecutar pipeline nuevo (sin publicar, solo generar video)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_DRIVE_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_TOKEN_JSON }}
         run: python generar_reel_v2.py --tema ${{ github.event.inputs.tema }} --no-publicar
 
       - name: Subir video generado como artefacto
