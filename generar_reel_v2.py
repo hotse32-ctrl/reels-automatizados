@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import time
 import random
 import asyncio
 import unicodedata
@@ -36,6 +37,11 @@ FB_ACCESS_TOKEN = os.environ.get("FACEBOOK_ACCESS_TOKEN")
 PAGE_ID = os.environ.get("FACEBOOK_PAGE_ID")
 YOUTUBE_TOKEN_JSON = os.environ.get("YOUTUBE_TOKEN_JSON")
 GOOGLE_DRIVE_TOKEN_JSON = os.environ.get("GOOGLE_DRIVE_TOKEN_JSON")
+
+IG_USER_ID = os.environ.get("INSTAGRAM_BUSINESS_ID", "17841443907833300")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY")
+THREADS_ACCESS_TOKEN = os.environ.get("THREADS_ACCESS_TOKEN")
 
 W, H = 720, 1280
 FPS = 24
@@ -188,10 +194,6 @@ ANGULOS_CREATIVOS = [
 
 
 def generar_guion(tema, model):
-    """NOTA (7 ago 2026): esta funcion de generacion con Gemini ya NO se usa
-    en el flujo normal (ver obtener_guion_tema), que ahora lee las frases
-    desde Google Drive. Se deja intacta por si se quiere reactivar Gemini
-    como respaldo en el futuro, igual que se hizo con publicar_facebook()."""
     angulo = random.choice(ANGULOS_CREATIVOS)
 
     prompt = (
@@ -787,6 +789,171 @@ def publicar_youtube(ruta_video, titulo, descripcion):
         print(f"Error al publicar en YouTube: {e}")
 
 
+def subir_video_temporal_github(ruta_video, nombre_archivo):
+    if not GITHUB_TOKEN or not GITHUB_REPOSITORY:
+        raise Exception("Falta GITHUB_TOKEN o GITHUB_REPOSITORY (solo disponibles al correr dentro de GitHub Actions)")
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    tag = f"tmp-video-{int(time.time())}"
+    resp = requests.post(
+        f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases",
+        headers=headers,
+        json={
+            "tag_name": tag,
+            "name": "Video temporal (auto, para publicar en Instagram/Threads)",
+            "body": "Release temporal creado automaticamente por generar_reel_v2.py solo para darle una URL publica al video antes de publicarlo. Se borra automaticamente apenas termina.",
+            "draft": False,
+            "prerelease": True,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    release = resp.json()
+    release_id = release["id"]
+    upload_url = release["upload_url"].split("{")[0]
+
+    with open(ruta_video, "rb") as f:
+        video_bytes = f.read()
+
+    resp2 = requests.post(
+        f"{upload_url}?name={nombre_archivo}",
+        headers={**headers, "Content-Type": "video/mp4"},
+        data=video_bytes,
+        timeout=180,
+    )
+    resp2.raise_for_status()
+    asset = resp2.json()
+    print(f"Video subido a release temporal de GitHub: {asset['browser_download_url']}")
+    return release_id, tag, asset["browser_download_url"]
+
+
+def borrar_release_temporal(release_id, tag):
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    try:
+        requests.delete(f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/{release_id}", headers=headers, timeout=30)
+        requests.delete(f"https://api.github.com/repos/{GITHUB_REPOSITORY}/git/refs/tags/{tag}", headers=headers, timeout=30)
+        print("Release temporal borrado")
+    except Exception as e:
+        print(f"No se pudo borrar el release temporal (no es grave, solo queda como basura en el repo): {e}")
+
+
+def _publicar_contenedor_instagram(video_url, media_type, caption=None):
+    url_contenedor = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+    data = {
+        "media_type": media_type,
+        "video_url": video_url,
+        "access_token": FB_ACCESS_TOKEN,
+    }
+    if caption and media_type != "STORIES":
+        data["caption"] = caption
+
+    resp = requests.post(url_contenedor, data=data, timeout=60)
+    if not resp.ok:
+        raise Exception(f"Instagram rechazo la creacion del contenedor ({resp.status_code}): {resp.text}")
+    contenedor_id = resp.json()["id"]
+
+    url_estado = f"https://graph.facebook.com/v19.0/{contenedor_id}"
+    estado = None
+    for _ in range(30):
+        time.sleep(10)
+        r = requests.get(url_estado, params={"fields": "status_code", "access_token": FB_ACCESS_TOKEN}, timeout=30)
+        estado = r.json().get("status_code")
+        print(f"   [{media_type}] Estado del contenedor de Instagram: {estado}")
+        if estado == "FINISHED":
+            break
+        if estado == "ERROR":
+            raise Exception("El procesamiento del video en Instagram termino en estado ERROR")
+
+    if estado != "FINISHED":
+        raise Exception(f"Timeout esperando que Instagram procese el video (ultimo estado: {estado})")
+
+    url_publicar = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
+    resp2 = requests.post(url_publicar, data={"creation_id": contenedor_id, "access_token": FB_ACCESS_TOKEN}, timeout=60)
+    if not resp2.ok:
+        raise Exception(f"Instagram rechazo la publicacion del contenedor ({resp2.status_code}): {resp2.text}")
+    print(f"Publicado en Instagram ({media_type}):", resp2.json())
+
+
+def publicar_instagram_todo(ruta_video, titulo, descripcion):
+    if not IG_USER_ID:
+        print("IG_USER_ID no configurado, se omite publicacion en Instagram.")
+        return
+
+    release_id = None
+    tag = None
+    try:
+        nombre_archivo = os.path.basename(ruta_video)
+        print("Subiendo video a almacenamiento temporal (GitHub Release) para Instagram...")
+        release_id, tag, video_url = subir_video_temporal_github(ruta_video, nombre_archivo)
+
+        caption = f"{titulo}\n\n{descripcion}\n\n#motivacion #superacion #reflexion #psicologia"
+        _publicar_contenedor_instagram(video_url, "REELS", caption=caption)
+        _publicar_contenedor_instagram(video_url, "STORIES")
+
+    except Exception as e:
+        print(f"Error al publicar en Instagram: {e}")
+    finally:
+        if release_id:
+            borrar_release_temporal(release_id, tag)
+
+
+def publicar_threads(ruta_video, titulo, descripcion):
+    if not THREADS_ACCESS_TOKEN:
+        print("THREADS_ACCESS_TOKEN no configurado, se omite publicacion en Threads.")
+        return
+
+    release_id = None
+    tag = None
+    try:
+        nombre_archivo = os.path.basename(ruta_video)
+        print("Subiendo video a almacenamiento temporal (GitHub Release) para Threads...")
+        release_id, tag, video_url = subir_video_temporal_github(ruta_video, nombre_archivo)
+
+        texto = f"{titulo}\n\n{descripcion}"[:500]
+
+        url_contenedor = "https://graph.threads.net/v1.0/me/threads"
+        resp = requests.post(url_contenedor, data={
+            "media_type": "VIDEO",
+            "video_url": video_url,
+            "text": texto,
+            "access_token": THREADS_ACCESS_TOKEN,
+        }, timeout=60)
+        resp.raise_for_status()
+        contenedor_id = resp.json()["id"]
+
+        url_estado = f"https://graph.threads.net/v1.0/{contenedor_id}"
+        estado = None
+        for _ in range(30):
+            time.sleep(10)
+            r = requests.get(url_estado, params={"fields": "status", "access_token": THREADS_ACCESS_TOKEN}, timeout=30)
+            estado = r.json().get("status")
+            print(f"   [THREADS] Estado del contenedor: {estado}")
+            if estado == "FINISHED":
+                break
+            if estado == "ERROR":
+                raise Exception("El procesamiento del video en Threads termino en estado ERROR")
+
+        if estado != "FINISHED":
+            raise Exception(f"Timeout esperando que Threads procese el video (ultimo estado: {estado})")
+
+        url_publicar = "https://graph.threads.net/v1.0/me/threads_publish"
+        resp2 = requests.post(url_publicar, data={"creation_id": contenedor_id, "access_token": THREADS_ACCESS_TOKEN}, timeout=60)
+        resp2.raise_for_status()
+        print("Publicado en Threads:", resp2.json())
+
+    except Exception as e:
+        print(f"Error al publicar en Threads: {e}")
+    finally:
+        if release_id:
+            borrar_release_temporal(release_id, tag)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tema", type=int, default=None, help="ID de un solo tema a procesar (1-10). Si se omite, procesa los 10.")
@@ -810,6 +977,8 @@ def main():
                 titulo = tema["nombre"]
                 descripcion = guion
                 publicar_youtube(ruta_salida, titulo, descripcion)
+                publicar_instagram_todo(ruta_salida, titulo, descripcion)
+                publicar_threads(ruta_salida, titulo, descripcion)
                 nombre_drive = f"tema{tema['id']}_{re.sub(r'[^a-zA-Z0-9]+', '_', tema['nombre'])}.mp4"
                 subir_video_a_drive(drive_service, ruta_salida, nombre_drive)
             else:
