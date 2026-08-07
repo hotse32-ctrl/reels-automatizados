@@ -13,8 +13,6 @@ import requests
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Compatibilidad: Pillow >= 10 eliminó Image.ANTIALIAS, pero moviepy 1.0.3
-# todavía lo usa internamente al hacer resize() de video. Este shim lo repara.
 if not hasattr(Image, "ANTIALIAS"):
     Image.ANTIALIAS = Image.Resampling.LANCZOS
 
@@ -33,44 +31,43 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
-# ============================================================
-# CONFIGURACIÓN GENERAL
-# ============================================================
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 FB_ACCESS_TOKEN = os.environ.get("FACEBOOK_ACCESS_TOKEN")
 PAGE_ID = os.environ.get("FACEBOOK_PAGE_ID")
 YOUTUBE_TOKEN_JSON = os.environ.get("YOUTUBE_TOKEN_JSON")
-
-# Credenciales de Drive (para leer el banco de imágenes). Se reutiliza el
-# mismo formato que YOUTUBE_TOKEN_JSON: un JSON con client_id, client_secret
-# y refresh_token de una cuenta autorizada con el scope de Drive.
 GOOGLE_DRIVE_TOKEN_JSON = os.environ.get("GOOGLE_DRIVE_TOKEN_JSON")
 
 W, H = 720, 1280
 FPS = 24
 VIDEO_BASE_PATH = "assets/video_base.mp4"
 
-# --- Banco de imágenes de fondo (Google Drive) ---
-# Carpeta "Imagenes a usar" dentro de "Reels - Videos para publicar" en el
-# Drive de Jose (hotse32@gmail.com). Cada video elige UNA imagen al azar de
-# esta carpeta y la usa como fondo fijo con zoom lento (Ken Burns), en vez
-# del video_base.mp4 en loop. Jose puede subir imágenes nuevas a esa carpeta
-# de Drive en cualquier momento (con el nombre que quieran) y se usan
-# automáticamente desde la siguiente ejecución, sin tocar código.
-# Si Drive falla o la carpeta está vacía, se cae de vuelta al video base
-# para que el pipeline nunca se rompa.
 DRIVE_FOLDER_ID_IMAGENES = "1fz8zLHafP6jmdOBI13tPlYbwtZ4gtUi_"
-ZOOM_FINAL_IMAGEN = 1.15  # cuánto se acerca la imagen al terminar el video (mismo valor usado antes en el pipeline)
+ZOOM_FINAL_IMAGEN = 1.15
 
-# Voz de edge-tts (voces neuronales de Microsoft, gratis, sin API key).
-# es-MX-JorgeNeural: voz masculina, español latino, tono serio/profundo,
-# encaja con el estilo dramático/reflexivo en segunda persona del guion.
+DRIVE_FOLDER_ID_VIDEOS = "1cjjDY5KIxaqy31iS3mJtsbGgN6C1pg9h"
+DRIVE_FOLDER_ID_VIDEOS_GENERADOS = "1WhNSgQm2AEB3AQ8gpyMRq3RoQGCYcUF1"
+DRIVE_FOLDER_ID_TEXTO = "1k-GK0WjkM-uItpt25yAZXWPn3wF4M8KZ"
+
+TEMA_CARPETA_TEXTO_ID = {
+    1: "1zVj4irQcY3IpgBQ2ssmZ5JolzXQeMNi5",
+    2: "1E8_R9kZTbZwnlB4WipOUh2oUOZTtyt2z",
+    3: "1Le07h9JVFQGngj8o8Ol__GAOUBHka1FY",
+    4: "1sNx-2p-U7kdcojI9jD9psU_45LgP5nTJ",
+    5: "1FmCgRHfpFXx9EgKqiBlYx_RY9-gE_UNl",
+    6: "1Kd2Uxa74LgGNf1MtpmrGWdFYX9XTQ2aR",
+    7: "1tjimTuIdXwCm-GjkU4j99tBK1_U435eu",
+    8: "1eyL_Fuu_INBXKzkqGM4bgQXr4G_lvpvz",
+    9: "18Ik3zp9UlkeQBgNg1SClIbLM2_6vPRy6",
+    10: "17_tUjp0YLafbeCLs2rwI7JFXT_-UumGf",
+}
+
 VOZ_TTS = "es-MX-JorgeNeural"
 
 PAUSA_ENTRE_FRASES = 0.4
 FADE_OUT = 0.15
 FADE_IN = 0.15
 HOLD_FINAL = 0.6
+INTRO_SILENCIO = 0.0
 
 FONT_SIZE = 60
 MAX_ANCHO_TEXTO = int(W * 0.7)
@@ -85,11 +82,8 @@ CTA_DURACION = 2.5
 CTA_FADE_IN = 0.3
 
 os.makedirs("output", exist_ok=True)
-TMP_DIR = Path(tempfile.mkdtemp(prefix="reels_imagenes_"))
+TMP_DIR = Path(tempfile.mkdtemp(prefix="reels_media_"))
 
-# ============================================================
-# LOS 10 TEMAS FIJOS (rotan todos los días)
-# ============================================================
 TEMAS = [
     {
         "id": 1,
@@ -102,7 +96,7 @@ TEMAS = [
         "id": 2,
         "nombre": "Ghosting: el abandono",
         "sonido_url": "https://cdn.pixabay.com/download/audio/2025/06/23/audio_8db020ee6c.mp3?filename=dragon-studio-water-dripping-364450.mp3",
-        "ejemplo_guion": "Desaparecio sin aviso. No hubo adios. Solo vacio. Te dejo con preguntas. ¿Que hiciste mal? Nada. El problema no eras tu. Era su cobardia. No vuelvas a buscar quien no te busco.",
+        "ejemplo_guion": "Desaparecio sin aviso. No hubo adios. Solo vacio. Te dejo con preguntas. Que hiciste mal? Nada. El problema no eras tu. Era su cobardia. No vuelvas a buscar quien no te busco.",
         "ejemplo_keywords": ["desaparecio", "vacio", "preguntas", "nada", "cobardia", "no vuelvas"],
     },
     {
@@ -164,9 +158,6 @@ TEMAS = [
 ]
 
 
-# ============================================================
-# UTILIDADES DE TEXTO
-# ============================================================
 def quitar_ene(texto):
     return "ñ" not in texto.lower()
 
@@ -184,48 +175,49 @@ def dividir_en_frases(guion):
 
 ANGULOS_CREATIVOS = [
     "Empieza con una pregunta directa que incomode a quien lo escucha.",
-    "Empieza describiendo una escena cotidiana y concreta (un mensaje que no llega, una llamada que no se hace, una puerta que se cierra).",
-    "Usa como imagen central una comparación con algo físico o cotidiano (un objeto, un lugar, el clima, un sonido).",
-    "Empieza con una orden corta y directa, casi un mandato, y luego explica por qué.",
-    "Contrasta lo que la persona cree que es verdad con lo que en realidad está pasando.",
-    "Cuéntalo como si describieras algo que pasó anoche o hace poco, en pasado breve, y termina en presente.",
-    "Usa una progresión de tres pasos (primero..., luego..., al final...) como estructura del guion.",
-    "Empieza negando de golpe una creencia común sobre el tema.",
-    "Usa una metáfora de la naturaleza (fuego, agua, tormenta, raíces, cicatrices) como hilo conductor.",
-    "Empieza con una afirmación incómoda sobre quien escucha, casi acusatoria, y luego suaviza hacia la esperanza.",
+    "Empieza describiendo una escena cotidiana y concreta.",
+    "Usa como imagen central una comparacion con algo fisico o cotidiano.",
+    "Empieza con una orden corta y directa, casi un mandato, y luego explica por que.",
+    "Contrasta lo que la persona cree que es verdad con lo que en realidad esta pasando.",
+    "Cuentalo como si describieras algo que paso anoche o hace poco, en pasado breve, y termina en presente.",
+    "Usa una progresion de tres pasos (primero..., luego..., al final...) como estructura del guion.",
+    "Empieza negando de golpe una creencia comun sobre el tema.",
+    "Usa una metafora de la naturaleza (fuego, agua, tormenta, raices, cicatrices) como hilo conductor.",
+    "Empieza con una afirmacion incomoda sobre quien escucha, casi acusatoria, y luego suaviza hacia la esperanza.",
 ]
 
 
 def generar_guion(tema, model):
+    """NOTA (7 ago 2026): esta funcion de generacion con Gemini ya NO se usa
+    en el flujo normal (ver obtener_guion_tema), que ahora lee las frases
+    desde Google Drive. Se deja intacta por si se quiere reactivar Gemini
+    como respaldo en el futuro, igual que se hizo con publicar_facebook()."""
     angulo = random.choice(ANGULOS_CREATIVOS)
 
-    prompt = f"""Eres un guionista experto en contenido motivacional y de psicologia emocional para Reels/Shorts en español.
-
-Tema del día: "{tema['nombre']}"
-
-Escribe un guion de voz en off ORIGINAL de 60 a 75 palabras (nunca más de 75), en segunda persona ("tu"), tono dramático y reflexivo,
-con frases cortas separadas por puntos (como golpes de efecto).
-
-A continuación hay un ejemplo, PERO es SOLO una referencia de tono, ritmo y extensión — no una plantilla para reescribir con sinónimos.
-Está TERMINANTEMENTE PROHIBIDO reutilizar las mismas palabras, frases, metáforas, ejemplos o estructura de frase de este ejemplo.
-Tu guion debe sonar como una idea completamente distinta sobre el mismo tema, con tus propias imágenes y palabras:
-
-"{tema['ejemplo_guion']}"
-
-ENFOQUE OBLIGATORIO PARA ESTE GUION EN PARTICULAR (síguelo, es lo que lo hace distinto cada vez):
-{angulo}
-
-REGLAS OBLIGATORIAS:
-1. Entre 60 y 75 palabras en total (nunca más de 75).
-2. PROHIBIDO usar la letra "Ñ" o "ñ" en cualquier palabra (ninguna excepción, ni siquiera en "año", "pequeño", "señal", etc. — evita esas palabras por completo, usa sinónimos).
-3. Frases cortas, separadas por puntos.
-4. Español neutro, tono dramático/reflexivo, segunda persona.
-5. Marca entre 5 y 7 "palabras clave" del guion (las palabras más impactantes, tal como estén escritas en el guion, sin puntuación).
-6. NO copies ni parafrasees el ejemplo: ni sus palabras clave, ni sus metáforas, ni el orden de sus ideas. Debe ser contenido nuevo.
-
-Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato exacto:
-{{"guion": "texto del guion aqui", "palabras_clave": ["palabra1", "palabra2", "palabra3"]}}
-"""
+    prompt = (
+        "Eres un guionista experto en contenido motivacional y de psicologia emocional "
+        "para Reels/Shorts en espanol.\n\n"
+        f"Tema del dia: \"{tema['nombre']}\"\n\n"
+        "Escribe un guion de voz en off ORIGINAL de 60 a 75 palabras (nunca mas de 75), "
+        "en segunda persona (\"tu\"), tono dramatico y reflexivo, con frases cortas "
+        "separadas por puntos (como golpes de efecto).\n\n"
+        "A continuacion hay un ejemplo, PERO es SOLO una referencia de tono, ritmo y "
+        "extension, no una plantilla para reescribir con sinonimos. Esta terminantemente "
+        "prohibido reutilizar las mismas palabras, frases, metaforas, ejemplos o "
+        "estructura de frase de este ejemplo:\n\n"
+        f"\"{tema['ejemplo_guion']}\"\n\n"
+        f"ENFOQUE OBLIGATORIO PARA ESTE GUION EN PARTICULAR:\n{angulo}\n\n"
+        "REGLAS OBLIGATORIAS:\n"
+        "1. Entre 60 y 75 palabras en total (nunca mas de 75).\n"
+        "2. Prohibido usar la letra ñ en cualquier palabra.\n"
+        "3. Frases cortas, separadas por puntos.\n"
+        "4. Espanol neutro, tono dramatico/reflexivo, segunda persona.\n"
+        "5. Marca entre 5 y 7 palabras clave del guion.\n"
+        "6. No copies ni parafrasees el ejemplo.\n\n"
+        "Responde UNICAMENTE con un JSON valido, sin texto adicional, con este formato "
+        "exacto:\n"
+        '{"guion": "texto del guion aqui", "palabras_clave": ["palabra1", "palabra2", "palabra3"]}'
+    )
 
     ultimo_error = None
     for intento in range(3):
@@ -241,25 +233,24 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, con este formato 
             palabras_clave = [normalizar_palabra(p) for p in data.get("palabras_clave", [])]
 
             if not quitar_ene(guion):
-                ultimo_error = "El guion generado contiene la letra Ñ"
-                print(f"⚠️ Intento {intento+1}: {ultimo_error}, reintentando...")
+                ultimo_error = "El guion generado contiene la letra enie"
+                print(f"Intento {intento+1}: {ultimo_error}, reintentando...")
                 continue
 
             num_palabras = len(guion.split())
             if num_palabras < 60 or num_palabras > 75:
                 ultimo_error = f"Largo fuera de rango ({num_palabras} palabras)"
-                print(f"⚠️ Intento {intento+1}: {ultimo_error}, reintentando...")
+                print(f"Intento {intento+1}: {ultimo_error}, reintentando...")
                 continue
 
-            print(f"✅ Guion generado para tema '{tema['nombre']}' ({num_palabras} palabras, enfoque: {angulo[:40]}...)")
-            print(f"   📝 {guion}")
+            print(f"Guion generado para tema '{tema['nombre']}' ({num_palabras} palabras)")
             return guion, palabras_clave
 
         except Exception as e:
             ultimo_error = str(e)
-            print(f"⚠️ Intento {intento+1} falló al generar guion: {e}")
+            print(f"Intento {intento+1} fallo al generar guion: {e}")
 
-    print(f"❌ No se pudo generar guion válido tras 3 intentos ({ultimo_error}). Usando guion de ejemplo de respaldo.")
+    print(f"No se pudo generar guion valido tras 3 intentos ({ultimo_error}). Usando guion de ejemplo de respaldo.")
     return tema["ejemplo_guion"], tema["ejemplo_keywords"]
 
 
@@ -275,7 +266,7 @@ def generar_audio_frase(texto_frase, ruta_salida):
         clip.close()
         return duracion
     except Exception as e:
-        print(f"⚠️ Error al generar audio de la frase '{texto_frase[:30]}...': {e}")
+        print(f"Error al generar audio de la frase '{texto_frase[:30]}...': {e}")
         return None
 
 
@@ -285,10 +276,10 @@ def descargar_sonido_ambiental(url, ruta_salida):
         r.raise_for_status()
         with open(ruta_salida, "wb") as f:
             f.write(r.content)
-        print("✅ Sonido ambiental descargado")
+        print("Sonido ambiental descargado")
         return True
     except Exception as e:
-        print(f"❌ Error al descargar sonido ambiental: {e}")
+        print(f"Error al descargar sonido ambiental: {e}")
         return False
 
 
@@ -305,17 +296,17 @@ def obtener_fuente(tamano):
             r.raise_for_status()
             with open(ruta_descarga, "wb") as f:
                 f.write(r.content)
-            print("✅ Fuente Montserrat (variable) descargada")
+            print("Fuente Montserrat (variable) descargada")
         except Exception as e:
-            print(f"⚠️ No se pudo descargar Montserrat: {e}")
+            print(f"No se pudo descargar Montserrat: {e}")
 
     if os.path.exists(ruta_descarga):
         font = ImageFont.truetype(ruta_descarga, tamano)
         try:
             font.set_variation_by_axes([700])
-            print("✅ Peso Bold (700) aplicado a Montserrat")
+            print("Peso Bold (700) aplicado a Montserrat")
         except Exception as e:
-            print(f"⚠️ No se pudo fijar el peso Bold de la fuente variable: {e}")
+            print(f"No se pudo fijar el peso Bold de la fuente variable: {e}")
         return font
 
     for c in [
@@ -323,7 +314,7 @@ def obtener_fuente(tamano):
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     ]:
         if os.path.exists(c):
-            print(f"⚠️ Usando fuente de respaldo: {c}")
+            print(f"Usando fuente de respaldo: {c}")
             return ImageFont.truetype(c, tamano)
 
     return ImageFont.load_default()
@@ -408,6 +399,10 @@ def construir_audio_y_subtitulos(guion, palabras_clave, font):
     clips_audio = []
     clips_subs = []
 
+    if INTRO_SILENCIO > 0:
+        clips_audio.append(AudioClip(lambda t: [0, 0], duration=INTRO_SILENCIO))
+        clips_subs.append(ImageClip(np.array(img_dummy)).set_duration(INTRO_SILENCIO))
+
     for i, frase in enumerate(frases):
         ruta_frase = f"output/frase_{i}.mp3"
         duracion_frase = generar_audio_frase(frase, ruta_frase)
@@ -449,14 +444,7 @@ def construir_audio_y_subtitulos(guion, palabras_clave, font):
     return audio_final, subs_final, audio_final.duration
 
 
-# ============================================================
-# BANCO DE IMÁGENES DESDE GOOGLE DRIVE
-# ============================================================
 def obtener_credenciales_drive():
-    """Construye credenciales OAuth de Drive a partir del secreto
-    GOOGLE_DRIVE_TOKEN_JSON (mismo formato que YOUTUBE_TOKEN_JSON: JSON con
-    client_id, client_secret y refresh_token). Si el secreto no está
-    configurado, devuelve None (el llamador cae de vuelta al video base)."""
     if not GOOGLE_DRIVE_TOKEN_JSON:
         return None
     try:
@@ -468,31 +456,145 @@ def obtener_credenciales_drive():
         )
         return build("drive", "v3", credentials=creds)
     except Exception as e:
-        print(f"⚠️ No se pudieron cargar las credenciales de Drive: {e}")
+        print(f"No se pudieron cargar las credenciales de Drive: {e}")
         return None
 
 
-def listar_imagenes_drive(drive_service):
-    """Lista todas las imágenes dentro de la carpeta DRIVE_FOLDER_ID_IMAGENES
-    (carpeta 'Imagenes a usar' en Drive). Devuelve una lista de dicts
-    {id, name}, o [] si falla o está vacía."""
+def obtener_o_crear_subcarpeta(drive_service, parent_id, nombre):
+    query = (
+        f"'{parent_id}' in parents and trashed = false "
+        f"and mimeType = 'application/vnd.google-apps.folder' and name = '{nombre}'"
+    )
+    resultado = drive_service.files().list(q=query, fields="files(id, name)").execute()
+    encontradas = resultado.get("files", [])
+    if encontradas:
+        return encontradas[0]["id"]
+
+    metadata = {
+        "name": nombre,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    carpeta = drive_service.files().create(body=metadata, fields="id").execute()
+    print(f"Subcarpeta '{nombre}' creada en Drive.")
+    return carpeta["id"]
+
+
+def listar_archivos_texto_carpeta(drive_service, carpeta_id):
+    query = (
+        f"'{carpeta_id}' in parents and trashed = false "
+        "and mimeType != 'application/vnd.google-apps.folder'"
+    )
+    resultado = drive_service.files().list(
+        q=query, fields="files(id, name, mimeType)", pageSize=1000
+    ).execute()
+    return resultado.get("files", [])
+
+
+def _clave_numero_archivo(archivo):
+    nombre = os.path.splitext(archivo["name"])[0].strip()
+    try:
+        return int(nombre)
+    except ValueError:
+        return 10**9
+
+
+def descargar_texto_archivo(drive_service, archivo):
+    file_id = archivo["id"]
+    mime = archivo.get("mimeType", "")
+    try:
+        if mime == "application/vnd.google-apps.document":
+            data = drive_service.files().export(fileId=file_id, mimeType="text/plain").execute()
+            texto = data.decode("utf-8") if isinstance(data, bytes) else data
+            return texto.strip()
+
+        ruta_local = TMP_DIR / f"frase_{file_id}"
+        request = drive_service.files().get_media(fileId=file_id)
+        with open(ruta_local, "wb") as f:
+            downloader = MediaIoBaseDownload(f, request)
+            listo = False
+            while not listo:
+                _, listo = downloader.next_chunk()
+
+        if mime == "text/plain" or archivo["name"].lower().endswith(".txt"):
+            with open(ruta_local, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read().strip()
+
+        import docx
+        documento = docx.Document(str(ruta_local))
+        texto = "\n".join(p.text for p in documento.paragraphs if p.text.strip())
+        return texto.strip()
+    except Exception as e:
+        print(f"No se pudo leer el archivo '{archivo.get('name')}' de Drive: {e}")
+        return None
+
+
+def mover_archivo_drive(drive_service, file_id, carpeta_origen, carpeta_destino):
+    try:
+        drive_service.files().update(
+            fileId=file_id, addParents=carpeta_destino, removeParents=carpeta_origen,
+            fields="id, parents",
+        ).execute()
+        return True
+    except Exception as e:
+        print(f"No se pudo mover el archivo en Drive: {e}")
+        return False
+
+
+def obtener_guion_tema(tema, drive_service):
+    carpeta_tema_id = TEMA_CARPETA_TEXTO_ID.get(tema["id"])
+
+    if drive_service is None or not carpeta_tema_id:
+        print("Drive no disponible para leer frases: usando guion de ejemplo de respaldo.")
+        return tema["ejemplo_guion"], []
+
+    try:
+        carpeta_usada_id = obtener_o_crear_subcarpeta(drive_service, carpeta_tema_id, "Usada")
+        carpeta_reutilizada_id = obtener_o_crear_subcarpeta(drive_service, carpeta_tema_id, "Reutilizada")
+
+        nuevas = listar_archivos_texto_carpeta(drive_service, carpeta_tema_id)
+        if nuevas:
+            elegido = min(nuevas, key=_clave_numero_archivo)
+            texto = descargar_texto_archivo(drive_service, elegido)
+            if texto:
+                mover_archivo_drive(drive_service, elegido["id"], carpeta_tema_id, carpeta_usada_id)
+                print(f"Frase nueva usada para '{tema['nombre']}': archivo '{elegido['name']}'")
+                return texto, []
+            print(f"No se pudo leer el archivo elegido ('{elegido['name']}'), se intenta con 'Usada'.")
+
+        usadas = listar_archivos_texto_carpeta(drive_service, carpeta_usada_id)
+        if usadas:
+            elegido = min(usadas, key=_clave_numero_archivo)
+            texto = descargar_texto_archivo(drive_service, elegido)
+            if texto:
+                mover_archivo_drive(drive_service, elegido["id"], carpeta_usada_id, carpeta_reutilizada_id)
+                print(f"Sin frases nuevas para '{tema['nombre']}': se reutilizo el archivo '{elegido['name']}'")
+                return texto, []
+
+        print(f"No hay frases nuevas ni reutilizables en Drive para '{tema['nombre']}'. Usando guion de ejemplo de respaldo.")
+        return tema["ejemplo_guion"], []
+
+    except Exception as e:
+        print(f"Error leyendo el banco de frases en Drive: {e}. Usando guion de ejemplo de respaldo.")
+        return tema["ejemplo_guion"], []
+
+
+def listar_media_drive(drive_service, carpeta_id, tipo_mime):
     try:
         query = (
-            f"'{DRIVE_FOLDER_ID_IMAGENES}' in parents and trashed = false "
-            "and (mimeType contains 'image/')"
+            f"'{carpeta_id}' in parents and trashed = false "
+            f"and (mimeType contains '{tipo_mime}')"
         )
         resultado = drive_service.files().list(
             q=query, fields="files(id, name)", pageSize=1000
         ).execute()
         return resultado.get("files", [])
     except Exception as e:
-        print(f"⚠️ No se pudo listar el banco de imágenes en Drive: {e}")
+        print(f"No se pudo listar la carpeta de Drive: {e}")
         return []
 
 
-def descargar_imagen_drive(drive_service, file_id, nombre):
-    """Descarga una imagen de Drive a un archivo temporal local y devuelve
-    la ruta local, o None si falla."""
+def descargar_archivo_drive(drive_service, file_id, nombre):
     try:
         ruta_local = TMP_DIR / nombre
         request = drive_service.files().get_media(fileId=file_id)
@@ -503,31 +605,34 @@ def descargar_imagen_drive(drive_service, file_id, nombre):
                 _, listo = downloader.next_chunk()
         return str(ruta_local)
     except Exception as e:
-        print(f"⚠️ No se pudo descargar la imagen '{nombre}' de Drive: {e}")
+        print(f"No se pudo descargar '{nombre}' de Drive: {e}")
         return None
+
+
+def elegir_video_aleatorio_drive(drive_service):
+    if drive_service is None:
+        return None
+    videos = listar_media_drive(drive_service, DRIVE_FOLDER_ID_VIDEOS, "video/")
+    if not videos:
+        return None
+    elegido = random.choice(videos)
+    print(f"Video de fondo elegido al azar: {elegido['name']}")
+    return descargar_archivo_drive(drive_service, elegido["id"], elegido["name"])
 
 
 def elegir_imagen_aleatoria_drive(drive_service):
-    """Elige una imagen al azar del banco de Drive y la descarga a un archivo
-    temporal local. Devuelve la ruta local, o None si Drive no está
-    configurado, falla, o la carpeta está vacía (en ese caso el llamador cae
-    de vuelta al video base en loop, como siempre)."""
     if drive_service is None:
         return None
-    imagenes = listar_imagenes_drive(drive_service)
+    imagenes = listar_media_drive(drive_service, DRIVE_FOLDER_ID_IMAGENES, "image/")
     if not imagenes:
-        print("⚠️ El banco de imágenes en Drive está vacío o no se pudo leer.")
+        print("El banco de imagenes en Drive esta vacio o no se pudo leer.")
         return None
     elegida = random.choice(imagenes)
-    print(f"🖼️ Imagen de fondo elegida del banco de Drive: {elegida['name']}")
-    return descargar_imagen_drive(drive_service, elegida["id"], elegida["name"])
+    print(f"Imagen de fondo elegida del banco de Drive: {elegida['name']}")
+    return descargar_archivo_drive(drive_service, elegida["id"], elegida["name"])
 
 
 def crear_clip_fondo_imagen(ruta_imagen, duracion):
-    """Construye el fondo a partir de UNA imagen fija del banco: la escala
-    para cubrir todo el cuadro 720x1280 (recorta lo que sobre, sin franjas)
-    y le aplica un zoom lento y continuo (efecto Ken Burns) de 1.0x a
-    ZOOM_FINAL_IMAGEN a lo largo de toda la duración del video."""
     base = ImageClip(ruta_imagen).set_duration(duracion)
     escala_cobertura = max(W / base.w, H / base.h)
     base = base.resize(escala_cobertura)
@@ -540,16 +645,43 @@ def crear_clip_fondo_imagen(ruta_imagen, duracion):
     return CompositeVideoClip([base], size=(W, H)).set_duration(duracion)
 
 
-# ============================================================
-# CONSTRUIR VIDEO FINAL DE UN TEMA
-# ============================================================
+def crear_clip_fondo_video(ruta_video, duracion):
+    clip = VideoFileClip(ruta_video).without_audio()
+
+    escala_cobertura = max(W / clip.w, H / clip.h)
+    clip = clip.resize(escala_cobertura)
+    clip = vfx.crop(
+        clip, width=W, height=H,
+        x_center=clip.w / 2, y_center=clip.h / 2,
+    )
+
+    if clip.duration < duracion:
+        n_loops = int(duracion // clip.duration) + 1
+        clip = concatenate_videoclips([clip] * n_loops)
+    clip = clip.subclip(0, duracion)
+    clip = clip.set_position(("center", "center"))
+    return CompositeVideoClip([clip], size=(W, H)).set_duration(duracion)
+
+
+def subir_video_a_drive(drive_service, ruta_video, nombre):
+    if drive_service is None:
+        return
+    try:
+        metadata = {"name": nombre, "parents": [DRIVE_FOLDER_ID_VIDEOS_GENERADOS]}
+        media = MediaFileUpload(ruta_video, resumable=True)
+        drive_service.files().create(body=metadata, media_body=media, fields="id").execute()
+        print(f"Copia del video subida a Drive (Videos Generados): {nombre}")
+    except Exception as e:
+        print(f"No se pudo subir la copia del video a Drive: {e}")
+
+
 def construir_video_tema(tema, guion, palabras_clave, ruta_salida, drive_service):
     font = obtener_fuente(FONT_SIZE)
 
-    print("🎬 Generando audio y subtítulos sincronizados (frase por frase)...")
+    print("Generando audio y subtitulos sincronizados (frase por frase)...")
     audio_narracion, clip_subtitulos, duracion_narracion = construir_audio_y_subtitulos(guion, palabras_clave, font)
     duracion_subs = clip_subtitulos.duration
-    print(f"   Duración real del audio: {duracion_narracion:.1f}s (subtítulos: {duracion_subs:.1f}s)")
+    print(f"   Duracion real del audio: {duracion_narracion:.1f}s (subtitulos: {duracion_subs:.1f}s)")
 
     img_dummy = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     draw_dummy = ImageDraw.Draw(img_dummy)
@@ -559,17 +691,26 @@ def construir_video_tema(tema, guion, palabras_clave, ruta_salida, drive_service
     clip_subtitulos = concatenate_videoclips([clip_subtitulos, cta_clip], method="compose")
 
     duracion_total = clip_subtitulos.duration
-    print(f"   Duración total con CTA final: {duracion_total:.1f}s")
+    print(f"   Duracion total con CTA final: {duracion_total:.1f}s")
 
-    print("🎥 Preparando fondo...")
-    ruta_imagen = elegir_imagen_aleatoria_drive(drive_service)
-    if ruta_imagen:
-        video_loop = crear_clip_fondo_imagen(ruta_imagen, duracion_total)
-    else:
-        print("⚠️ Sin imagen de Drive disponible, usando video base en loop.")
-        video_original = VideoFileClip(VIDEO_BASE_PATH).resize((W, H))
-        n_loops = int(duracion_total // video_original.duration) + 1
-        video_loop = concatenate_videoclips([video_original] * n_loops).subclip(0, duracion_total)
+    print("Preparando fondo (1. video al azar, 2. imagen al azar, 3. video base)...")
+    ruta_video = elegir_video_aleatorio_drive(drive_service)
+    if ruta_video:
+        try:
+            video_loop = crear_clip_fondo_video(ruta_video, duracion_total)
+        except Exception as e:
+            print(f"No se pudo usar el video de fondo elegido ({e}), se intenta con imagen.")
+            ruta_video = None
+
+    if not ruta_video:
+        ruta_imagen = elegir_imagen_aleatoria_drive(drive_service)
+        if ruta_imagen:
+            video_loop = crear_clip_fondo_imagen(ruta_imagen, duracion_total)
+        else:
+            print("Sin video ni imagen de Drive disponibles, usando video base en loop.")
+            video_original = VideoFileClip(VIDEO_BASE_PATH).resize((W, H))
+            n_loops = int(duracion_total // video_original.duration) + 1
+            video_loop = concatenate_videoclips([video_original] * n_loops).subclip(0, duracion_total)
 
     if audio_narracion.duration < duracion_total:
         silencio = AudioClip(lambda t: [0, 0], duration=duracion_total - audio_narracion.duration)
@@ -583,7 +724,7 @@ def construir_video_tema(tema, guion, palabras_clave, ruta_salida, drive_service
             amb = audio_loop(amb, duration=duracion_total)
             audio_ambiente = volumex(amb, 0.12)
         except Exception as e:
-            print(f"⚠️ No se pudo procesar el sonido ambiental: {e}")
+            print(f"No se pudo procesar el sonido ambiental: {e}")
 
     if audio_ambiente is not None:
         audio_final = CompositeAudioClip([audio_ambiente, volumex(audio_narracion, 1.0)])
@@ -599,13 +740,10 @@ def construir_video_tema(tema, guion, palabras_clave, ruta_salida, drive_service
         ruta_salida, fps=FPS, codec="libx264", audio_codec="aac",
         threads=4, verbose=False, logger=None
     )
-    print(f"✅ Video final generado: {ruta_salida}")
+    print(f"Video final generado: {ruta_salida}")
     return duracion_total
 
 
-# ============================================================
-# PUBLICACIÓN
-# ============================================================
 def publicar_facebook(ruta_video, titulo, descripcion):
     try:
         url_fb = f"https://graph.facebook.com/v19.0/{PAGE_ID}/videos"
@@ -618,11 +756,11 @@ def publicar_facebook(ruta_video, titulo, descripcion):
         }
         resp = requests.post(url_fb, files=files, data=data, timeout=180)
         if resp.status_code == 200:
-            print("✅ Publicado en Facebook:", resp.json())
+            print("Publicado en Facebook:", resp.json())
         else:
-            print(f"❌ Error en Facebook: {resp.status_code} - {resp.text}")
+            print(f"Error en Facebook: {resp.status_code} - {resp.text}")
     except Exception as e:
-        print(f"❌ Excepción al publicar en Facebook: {e}")
+        print(f"Excepcion al publicar en Facebook: {e}")
 
 
 def publicar_youtube(ruta_video, titulo, descripcion):
@@ -644,51 +782,44 @@ def publicar_youtube(ruta_video, titulo, descripcion):
         media = MediaFileUpload(ruta_video, chunksize=-1, resumable=True)
         req = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
         resp = req.execute()
-        print("✅ Publicado en YouTube:", resp["id"], f"https://youtu.be/{resp['id']}")
+        print("Publicado en YouTube:", resp["id"], f"https://youtu.be/{resp['id']}")
     except Exception as e:
-        print(f"❌ Error al publicar en YouTube: {e}")
+        print(f"Error al publicar en YouTube: {e}")
 
 
-# ============================================================
-# MAIN
-# ============================================================
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--tema", type=int, default=None, help="ID de un solo tema a procesar (1-10). Si se omite, procesa los 10.")
     parser.add_argument("--no-publicar", action="store_true", help="Genera el video pero no publica (para pruebas).")
     args = parser.parse_args()
 
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-flash-latest")
-
     drive_service = obtener_credenciales_drive()
     if drive_service is None:
-        print("⚠️ GOOGLE_DRIVE_TOKEN_JSON no configurado o inválido: se usará el video base en loop para todos los temas.")
+        print("GOOGLE_DRIVE_TOKEN_JSON no configurado o invalido: se usaran los respaldos locales (guion de ejemplo y video base).")
 
     temas_a_procesar = [t for t in TEMAS if t["id"] == args.tema] if args.tema else TEMAS
 
     for tema in temas_a_procesar:
         print(f"\n========== TEMA {tema['id']}: {tema['nombre']} ==========")
         try:
-            guion, palabras_clave = generar_guion(tema, model)
+            guion, palabras_clave = obtener_guion_tema(tema, drive_service)
             ruta_salida = f"output/reel_tema{tema['id']}.mp4"
             construir_video_tema(tema, guion, palabras_clave, ruta_salida, drive_service)
 
             if not args.no_publicar:
                 titulo = tema["nombre"]
                 descripcion = guion
-                # Solo YouTube por ahora (pedido explicito de Jose, 31 jul 2026).
-                # Facebook queda desactivado aqui pero la funcion publicar_facebook()
-                # se deja intacta por si se quiere reactivar mas adelante.
                 publicar_youtube(ruta_salida, titulo, descripcion)
+                nombre_drive = f"tema{tema['id']}_{re.sub(r'[^a-zA-Z0-9]+', '_', tema['nombre'])}.mp4"
+                subir_video_a_drive(drive_service, ruta_salida, nombre_drive)
             else:
-                print("⏭️ --no-publicar activado, video generado pero no publicado.")
+                print("--no-publicar activado, video generado pero no publicado.")
 
         except Exception as e:
-            print(f"❌ Error procesando tema {tema['id']}: {e}")
+            print(f"Error procesando tema {tema['id']}: {e}")
             continue
 
-    print("\n🎉 PROCESO COMPLETADO")
+    print("\nPROCESO COMPLETADO")
 
 
 if __name__ == "__main__":
