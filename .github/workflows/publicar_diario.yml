@@ -1,35 +1,5 @@
 name: Generar y Publicar Reel Diario
 
-# ANTES usabamos 10 cron distintos, uno por cada horario exacto. GitHub
-# Actions a veces retrasa o directamente se salta ejecuciones programadas
-# cuando hay mucha carga en su cola global de "scheduled workflows" (le
-# paso a Jose el 20 jul 2026: dos temas del dia nunca se publicaron).
-#
-# AHORA usamos UN SOLO cron que corre cada 30 minutos, todo el dia. Cada
-# vez que corre, verificar_horario.py revisa si algun tema del horario de
-# abajo ya deberia haberse publicado hoy (hora Chile) y todavia no se
-# publico -- si es asi, lo publica en ese momento. Si no hay nada
-# pendiente, el workflow termina casi al instante sin instalar nada ni
-# gastar minutos de Actions. Asi nunca se pierde un tema por completo,
-# como maximo sale hasta ~30 minutos mas tarde de lo ideal.
-#
-# El estado de que temas ya se publicaron hoy se guarda en
-# estado_publicaciones.json (en la raiz del repo, se actualiza solo).
-#
-# Horario de referencia (hora Chile, invierno UTC-4) -- ver tambien
-# scripts/verificar_horario.py, que es la fuente real de la logica.
-# Distribuido cada 2h24min a lo largo de las 24 horas (incluye madrugada):
-# Tema 1  -> 0:00   | Tema 6  -> 12:00
-# Tema 2  -> 2:24   | Tema 7  -> 14:24
-# Tema 3  -> 4:48   | Tema 8  -> 16:48
-# Tema 4  -> 7:12   | Tema 9  -> 19:12
-# Tema 5  -> 9:36   | Tema 10 -> 21:36
-#
-# OJO horario de verano: cuando Chile pase a UTC-3 (oct-mar), hay que
-# cambiar OFFSET_CHILE en scripts/verificar_horario.py de -4 a -3 horas
-# para mantener la misma hora local (si no, todo sale 1 hora mas tarde,
-# no se pierde nada, solo se corre el horario).
-
 on:
   schedule:
     - cron: '*/30 * * * *'
@@ -40,29 +10,16 @@ on:
         required: false
         default: ''
 
-# IMPORTANTE: con el cron cada 15 min, a veces GitHub dispara dos runs
-# casi al mismo tiempo (paso el 20 jul 2026: dos runs leyeron el estado
-# ANTES de que el otro alcanzara a guardar "ya publicado", y el mismo
-# tema salio duplicado en las 5 plataformas). Este bloque de concurrencia
-# obliga a que nunca corran dos ejecuciones de este workflow al mismo
-# tiempo -- si dos disparos caen juntos, el segundo espera en cola a que
-# el primero termine (y haga su commit del estado) antes de empezar, asi
-# siempre lee el estado mas reciente y nunca vuelve a duplicar un tema.
 concurrency:
   group: publicar-diario-reel
   cancel-in-progress: false
 
-# contents: write es necesario para que GITHUB_TOKEN pueda: (a) crear y
-# borrar el Release temporal que usa publicar_instagram_todo() para darle
-# a Instagram/Threads una URL publica del video, y (b) commitear
-# estado_publicaciones.json despues de cada publicacion automatica.
 permissions:
   contents: write
 
 jobs:
   generar-y-publicar:
     runs-on: ubuntu-latest
-
     steps:
       - name: Clonar repositorio
         uses: actions/checkout@v4
@@ -91,7 +48,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          pip install requests google-generativeai Pillow numpy "moviepy==1.0.3" imageio_ffmpeg edge-tts google-auth-oauthlib google-auth google-api-python-client
+          pip install requests google-generativeai Pillow numpy "moviepy==1.0.3" imageio_ffmpeg edge-tts google-auth-oauthlib google-auth google-api-python-client python-docx
 
       - name: Generar y publicar (Tema ${{ steps.tema.outputs.id }})
         if: steps.tema.outputs.id != ''
