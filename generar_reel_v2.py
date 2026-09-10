@@ -156,11 +156,11 @@ TEMAS = [
 
 
 def quitar_ene(texto):
-    return "Ã±" not in texto.lower()
+    return "ñ" not in texto.lower()
 
 
 def normalizar_palabra(p):
-    p = p.strip(".,;:!?Â¿Â¡\"'()")
+    p = p.strip(".,;:!?¿¡\"'()")
     p = unicodedata.normalize("NFKD", p).encode("ascii", "ignore").decode("ascii")
     return p.lower()
 
@@ -202,7 +202,7 @@ def generar_guion(tema, model):
         f"ENFOQUE OBLIGATORIO PARA ESTE GUION EN PARTICULAR:\n{angulo}\n\n"
         "REGLAS OBLIGATORIAS:\n"
         "1. Entre 60 y 75 palabras en total (nunca mas de 75).\n"
-        "2. Prohibido usar la letra Ã± en cualquier palabra.\n"
+        "2. Prohibido usar la letra ñ en cualquier palabra.\n"
         "3. Frases cortas, separadas por puntos.\n"
         "4. Espanol neutro, tono dramatico/reflexivo, segunda persona.\n"
         "5. Marca entre 5 y 7 palabras clave del guion.\n"
