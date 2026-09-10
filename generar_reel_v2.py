@@ -860,8 +860,15 @@ def _publicar_contenedor_instagram(video_url, media_type, caption=None, intentos
     """Crea y publica un contenedor de Instagram, reintentando si Instagram
     devuelve ERROR al procesar el video (suele ser intermitente al descargar
     la URL temporal, no un problema del video en si).
+
+    Entre reintentos se espera unos minutos (backoff progresivo) en vez de
+    reintentar de inmediato: el error de procesamiento de Meta (por ejemplo
+    "Media upload has failed with error code 2207076") suele ser transitorio
+    del lado de sus servidores, pero varios reportes de la comunidad indican
+    que reintentar a los pocos segundos no da tiempo a que se resuelva.
     """
     ultimo_error = None
+    espera_minutos = [2, 4]  # entre intento 1->2 y 2->3
     for intento in range(1, intentos + 1):
         try:
             contenedor_id = _intentar_contenedor_instagram(video_url, media_type, caption=caption)
@@ -878,7 +885,9 @@ def _publicar_contenedor_instagram(video_url, media_type, caption=None, intentos
         except Exception as e:
             ultimo_error = e
             if intento < intentos:
-                print(f"   [{media_type}] Intento {intento} fallo ({e}), reintentando ({intento + 1}/{intentos})...")
+                espera = espera_minutos[intento - 1] if intento - 1 < len(espera_minutos) else espera_minutos[-1]
+                print(f"   [{media_type}] Intento {intento} fallo ({e}), esperando {espera} min antes de reintentar ({intento + 1}/{intentos})...")
+                time.sleep(espera * 60)
             else:
                 raise ultimo_error
 
@@ -950,8 +959,12 @@ def _publicar_contenedor_threads(video_url, texto, intentos=3):
     """Crea y publica un contenedor de Threads, reintentando si Threads
     devuelve ERROR al procesar el video (suele ser intermitente al descargar
     la URL temporal, no un problema del video en si).
+
+    Igual que en Instagram, se espera unos minutos (backoff progresivo)
+    entre reintentos en vez de reintentar de inmediato.
     """
     ultimo_error = None
+    espera_minutos = [2, 4]  # entre intento 1->2 y 2->3
     for intento in range(1, intentos + 1):
         try:
             contenedor_id = _intentar_contenedor_threads(video_url, texto)
@@ -967,7 +980,9 @@ def _publicar_contenedor_threads(video_url, texto, intentos=3):
         except Exception as e:
             ultimo_error = e
             if intento < intentos:
-                print(f"   [THREADS] Intento {intento} fallo ({e}), reintentando ({intento + 1}/{intentos})...")
+                espera = espera_minutos[intento - 1] if intento - 1 < len(espera_minutos) else espera_minutos[-1]
+                print(f"   [THREADS] Intento {intento} fallo ({e}), esperando {espera} min antes de reintentar ({intento + 1}/{intentos})...")
+                time.sleep(espera * 60)
             else:
                 raise ultimo_error
 
